@@ -6,8 +6,7 @@ from radar import Radar
 
 def USRR_Dynamic_Config():
     # Paths to radar cube data
-    radar_file = Path("RadarCube/USRR_Dynamic10m/3D/RadarCube7.npy")
-    
+    radar_file = "RadarCube/USRR_Dynamic10m/3D/RadarCube"
     # Parameter of Radar
     f_center = 78.26375e9  # Center Frequency (Hz)
     B = 2.5275e9           # Radar Bandwidth (Hz)
@@ -26,7 +25,7 @@ def USRR_Dynamic_Config():
 
 def MRR_CornField_Config():
     # Paths to radar cube data
-    radar_file = Path("RadarCube/MRR_CornField/3D/RadarCube1.npy")
+    radar_file = "RadarCube/MRR_CornField/3D/RadarCube"
     
     # Parameter of Radar
     f_center = 77.27e9     # Center Frequency (Hz)
@@ -47,12 +46,20 @@ def MRR_CornField_Config():
 def main():
     
     # Create Radar object
-    radar = Radar(*USRR_Dynamic_Config())
+    USSR_radar = Radar(*USRR_Dynamic_Config(), num=5)
     
     # Tasks ausführen
-    radar.Task_Step_1()
-    radar.Task_Step_2()
-    #radar.task3()
+    USSR_radar.Task_Step_1()
+    USSR_radar.Task_Step_2()
+    #USSR_radar.task3()
+
+
+    # Create Radar object
+    #MRR_radar = Radar(*MRR_CornField_Config(), num=0)
+    # Tasks ausführen
+    #MRR_radar.Task_Step_1()
+    #MRR_radar.Task_Step_2()
+    #MRR_radar.task3()
 
 if __name__ == "__main__":
     main()

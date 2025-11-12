@@ -1,13 +1,16 @@
 # Import necessary libraries
+from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.signal import get_window
 
 
 class Radar:
-    def __init__(self, radar_file, f_center, B, f_sampling, num_samples, tc, num_chirps, Rx_gain, Tx_Channels, Rx_Channels):
+    def __init__(self, radar_file, f_center, B, f_sampling, num_samples, tc, num_chirps, Rx_gain, Tx_Channels, Rx_Channels, num=0):
         # Path to radar cube data
-        self.radar_file = radar_file
+        self.radar_file = Path(radar_file + f"{num}.npy")
+
+        print(f"Initializing Radar with file: {self.radar_file}")
 
         # Konstants
         self.c = 299792458  # Lichtgeschwindigkeit in m/s
@@ -24,7 +27,7 @@ class Radar:
         self.Tx_Channels = Tx_Channels
         self.Rx_Channels = Rx_Channels
 
-        self.window_name = ['blackman', 'hanning']  
+        self.window_name = ['hanning', 'hanning']   #['blackman', 'hanning']  
 
 
 
@@ -45,7 +48,7 @@ class Radar:
 
 
         # TASK 1.2 Apply different windowing functions and process
-        self.apply_window()
+        self.apply_window(self.single_channel)
 
 
         # TASK 1.3 Perform 2D-FFT    
@@ -55,12 +58,28 @@ class Radar:
         # TASK 1.4 Plot FFT Result
         self.plot_fft_result()
 
+
+
     def Task_Step_2(self):
         # TASK 2.1 Calculation of Key Parameters
         self.calculation_of_key_parameter()
 
         # TASK 2.2 Plot Range-Doppler Map with Scaled Axes
-        self.plot_fft_results()
+        self.plot_fft_results(name=f"Channel {self.channel}")
+
+
+        # With all Channels
+        # sum all Channels
+        sum_Channels = np.sum(self.AntennaArray, axis=2)
+        self.apply_window(sum_Channels)
+
+        # TASK 1.3 Perform 2D-FFT    
+        self.perform_2d_fft()
+
+
+        # TASK 2.2 Plot Range-Doppler Map with Scaled Axes
+        self.plot_fft_results(name="All Channels Summed")
+
 
 
     def task3(self):
@@ -104,17 +123,10 @@ class Radar:
         
 
     def _select_single_channel(self):
-        # Choose frame 0 by default (modify if you want to loop frames)
-        if self.AntennaArray.ndim == 3:
-            # assume shape (range, antenna, frames) or (range, angle, frames)
-            self.single_channel = self.AntennaArray[:, :, self.channel]
-        elif self.AntennaArray.ndim == 2:
-            self.single_channel = self.AntennaArray
-        else:
-            raise ValueError("Unsupported radar_data dimensions: expected 2D or 3D array")
+        self.single_channel = self.AntennaArray[:, :, self.channel]
 
 
-    def apply_window(self):
+    def apply_window(self, channel):
         # Task 1.2 Apply different windowing functions and process
         if isinstance(self.window_name, (list, tuple)):
             if len(self.window_name) == 0:
@@ -141,21 +153,22 @@ class Radar:
         self.window_2d = np.outer(self.window_range, self.window_doppler)
 
         # 3. Fenster anwenden
-        self.windowed_data = self.single_channel * self.window_2d
+        self.windowed_data = channel #* self.window_2d
 
 
     def perform_2d_fft(self):   
         # Führe die 2D-FFT durch
+        print(f"FFT: {self.single_channel.shape}\n")
         self.fft_result_2d = np.fft.fft2(self.windowed_data)
-
-
-    def plot_fft_result(self):
-        # Task 1.4 Plot FFT Ergebnis
-
         # 1. Verschiebe den Nullfrequenzpunkt (wie bisher)
-        fft_shifted = np.fft.fftshift(self.fft_result_2d)
+        self.fft_shifted = np.fft.fftshift(self.fft_result_2d, axes=(1,))
+
+
+    def plot_fft_result(self):  
+        # Task 1.4 Plot FFT Ergebnis
+        #fft_shifted = self.fft_result_2d # np.fft.fftshift(self.fft_result_2d)
         # 2. Berechne die absolute Amplitude in dB (wie bisher)
-        magnitude_db = 20 * np.log10(np.abs(fft_shifted) + 1e-10)
+        magnitude_db = 20 * np.log10(np.abs(self.fft_shifted) + 1e-10)
 
         # 3. NEU: Normalisieren auf den Peak (0 dB)
         # Finde den maximalen Wert und ziehe ihn von allen Werten ab.
@@ -166,7 +179,7 @@ class Radar:
         
         # Verwende 'normalized_db' für den Plot
         # Setze vmax=0 (der Peak) und vmin=-50 (um das Rauschen abzuschneiden)
-        plt.imshow(self.normalized_db, aspect='auto', cmap='seismic', vmin=-50, vmax=0)
+        plt.imshow(self.normalized_db, aspect='auto', cmap='seismic', vmin=-50, vmax=0) # cmap='seismic'
         plt.colorbar()
         
         # Dynamischer Titel
@@ -212,7 +225,15 @@ class Radar:
         self._print_key_parameters()
 
 
-    def plot_fft_results(self):
+    def plot_fft_results(self, name=""):
+        #fft_shifted = self.fft_result_2d # np.fft.fftshift(self.fft_result_2d)
+        # 2. Berechne die absolute Amplitude in dB (wie bisher)
+        magnitude_db = 20 * np.log10(np.abs(self.fft_shifted) + 1e-10)
+
+        # 3. NEU: Normalisieren auf den Peak (0 dB)
+        # Finde den maximalen Wert und ziehe ihn von allen Werten ab.
+        self.normalized_db = magnitude_db - np.max(magnitude_db)
+
         # Plot FFT Results
         plt.figure(figsize=(10, 7))
 
@@ -236,7 +257,7 @@ class Radar:
         plt.colorbar(label='Relative Amplitude (dB)')
 
         # Titel und Labels für Step 2 aktualisieren
-        plot_title = f'Task 2: Range-Doppler Plot (Scaled) - Channel {self.channel} \nData File: {self.radar_file.name}'
+        plot_title = f'Task 2: Range-Doppler Plot (Scaled) - {name} \nData File: {self.radar_file.name}'
         plt.title(plot_title)
 
         plt.xlabel('Velocity (m/s)')
