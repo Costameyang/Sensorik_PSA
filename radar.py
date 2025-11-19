@@ -2,6 +2,7 @@
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 from scipy.signal import get_window
 
 
@@ -78,7 +79,9 @@ class Radar:
 
 
         # TASK 2.2 Plot Range-Doppler Map with Scaled Axes
-        self.plot_fft_results(name="All Channels Summed")
+        #self.plot_fft_results(name="All Channels Summed")
+
+        self.plot_fft_results_3d(name="All Channels Summed 3D")
 
 
 
@@ -264,4 +267,53 @@ class Radar:
         plt.ylabel('Distance (m)')
         # -----------------------------------------------------------------
 
+        plt.show()
+
+        print("DONE: Plot FFT Results with Scaled Axes")
+
+
+
+    def plot_fft_results_3d(self, name="", decimate=(1,1), elev=30, azim=-60):
+        """
+        3D-Plot der bereits berechneten Range-Doppler-Daten (self.normalized_db).
+        - name: Titelzusatz
+        - decimate: tuple (r_step, v_step) um ggf. Daten zu reduzieren (z.B. (2,2))
+        - elev, azim: Ansichtswinkel
+        """
+        # Falls noch nicht berechnet, berechne normalized_db
+        if not hasattr(self, "normalized_db") or self.normalized_db is None:
+            magnitude_db = 20 * np.log10(np.abs(self.fft_shifted) + 1e-10)
+            self.normalized_db = magnitude_db - np.max(magnitude_db)
+
+        # Achsenvektoren wie in plot_fft_results
+        range_axis = np.linspace(0, self.range_max, self.num_samples)
+        velocity_axis = np.linspace(-self.vel_max, self.vel_max, self.num_chirps)
+
+        # Erzeuge Gitter (Shapes: (num_samples, num_chirps))
+        V, R = np.meshgrid(velocity_axis, range_axis)  # V: velocity, R: range
+        Z = self.normalized_db
+
+        # Optional: Decimation für Performance
+        r_step, v_step = decimate
+        if r_step > 1 or v_step > 1:
+            R = R[::r_step, ::v_step]
+            V = V[::r_step, ::v_step]
+            Z = Z[::r_step, ::v_step]
+
+        fig = plt.figure(figsize=(12, 8))
+        ax = fig.add_subplot(111, projection='3d')
+
+        # Surface-Plot
+        surf = ax.plot_surface(V, R, Z, cmap='seismic', linewidth=0, antialiased=True, vmin=-50, vmax=0)
+
+        # Farbenleisten und Labels
+        cbar = fig.colorbar(surf, ax=ax, shrink=0.6, pad=0.1)
+        cbar.set_label('Relative Amplitude (dB)')
+
+        ax.set_title(f'Task 2 (3D): Range-Doppler Surface - {name} \nData File: {self.radar_file.name}')
+        ax.set_xlabel('Velocity (m/s)')
+        ax.set_ylabel('Distance (m)')
+        ax.set_zlabel('Relative Amplitude (dB)')
+
+        ax.view_init(elev=elev, azim=azim)
         plt.show()
