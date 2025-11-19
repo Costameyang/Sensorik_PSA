@@ -46,7 +46,7 @@ def MRR_CornField_Config():
 def main():
     
     # Create Radar object
-    USSR_radar = Radar(*USRR_Dynamic_Config(), num=5)
+    USSR_radar = Radar(*USRR_Dynamic_Config(), num=5, use_tk=True)
     
     # Tasks ausführen
     USSR_radar.Task_Step_1()
