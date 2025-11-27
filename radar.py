@@ -26,14 +26,16 @@ class Radar:
             print(msg, end='')
 
 
-    def __init__(self, radar_file, f_center, B, f_sampling, num_samples, tc, num_chirps, Rx_gain, Tx_Channels, Rx_Channels, num=0, use_tk=False):
+    def __init__(self, radar_file, f_center, B, f_sampling, num_samples, tc, chirp_slope, num_chirps, Rx_gain, Tx_Channels, Rx_Channels, num=0, use_tk=False, output_print=True):
         # Path to radar cube data
         self.radar_file = Path(radar_file + f"{num}.npy")
 
-        self.use_tk = bool(use_tk)
-        self.printer = TkPrinter(title=f"Radar Logs: {self.radar_file.name}")
+        self.output_print = output_print
+        if self.output_print:
+            self.use_tk = bool(use_tk)
+            self.printer = TkPrinter(title=f"Radar Logs: {self.radar_file.name}")
 
-        self._log(f"\nInitializing Radar with file: {self.radar_file}")
+            self._log(f"\nInitializing Radar with file: {self.radar_file}")
 
 
         # Konstants
@@ -46,7 +48,9 @@ class Radar:
         self.num_samples = num_samples
         self.tc = tc
         self.num_chirps = num_chirps
+        self.chirp_slope = chirp_slope
         self.Rx_gain = Rx_gain
+        self.f_0 = self.f_center - self.B / 2  # Startfrequenz
         
         self.Tx_Channels = Tx_Channels
         self.Rx_Channels = Rx_Channels
@@ -59,20 +63,26 @@ class Radar:
 
         # CFAR-Kernel Paraeter
         self.kernel_matrix = None       # Angabe einer 2D-Matrix als Kernel möglich (0=außerhalb, 1=train, 2=guard, 3=CUT)
-        self.train_range = 15
-        self.train_doppler = 15
-        self.guard_range = 10
-        self.guard_doppler = 10
+        self.train_range = 10 # 15
+        self.train_doppler = 10 # 15
+        self.guard_range = 8 # 10
+        self.guard_doppler = 8 #  10
         self.threshold_factor = 300     # Parameter zur Schwellwertberechnung
 
+         # Load Antenna Array
+        antenna_array_path = Path("RadarCube/AntennaArray.npy")
+        self.AntennaPositions = np.load(antenna_array_path)
 
+        print(f"Antenna Positions loaded from {antenna_array_path}, shape: {self.AntennaPositions.shape}\n\n")
+        #print(self.AntennaPositions)
 
     def Task_Step_1(self):
-        # Print wht File is being processed
-        self._log(f"\n------------------------------------------------------------------------------------------------")
-        self._log(f"------------------------------------------------------------------------------------------------")
-        self._log(f"\nTask 1: (Processing file {self.radar_file.name})")
-        
+        if self.output_print:
+            # Print wht File is being processed
+            self._log(f"\n------------------------------------------------------------------------------------------------")
+            self._log(f"------------------------------------------------------------------------------------------------")
+            self._log(f"\nTask 1: (Processing file {self.radar_file.name})")
+    
 
         # TASK 1.1 Load radar cube
         self.load_radar_cube()
@@ -94,16 +104,17 @@ class Radar:
 
 
         # TASK 1.4 Plot FFT Result
-        self.plot_fft_result()
+        self.plot_fft_results(name=f"Channel {self.channel}", Task="1.4")
 
 
 
     def Task_Step_2(self):
-        # Task 2: Print Key Parameters and Plot Range-Doppler Map
-        self._log(f"\n------------------------------------------------------------------------------------------------")
-        self._log(f"------------------------------------------------------------------------------------------------")
-        self._log(f"\nTask 2: (Processing file {self.radar_file.name})")
-
+        if self.output_print:
+            # Task 2: Print Key Parameters and Plot Range-Doppler Map
+            self._log(f"\n------------------------------------------------------------------------------------------------")
+            self._log(f"------------------------------------------------------------------------------------------------")
+            self._log(f"\nTask 2: (Processing file {self.radar_file.name})")
+       
         # TASK 2.1 Calculation of Key Parameters
         self.calculation_of_key_parameter()
 
@@ -128,13 +139,15 @@ class Radar:
 
 
     def Task_Step_3(self):
-        # Task 3 Implementierung
-        self._log(f"\n------------------------------------------------------------------------------------------------")
-        self._log(f"------------------------------------------------------------------------------------------------")  
-        self._log(f"\nTask 3: (Processing file {self.radar_file.name})")
+        if self.output_print:
+            # Task 3 Implementierung
+            self._log(f"\n------------------------------------------------------------------------------------------------")
+            self._log(f"------------------------------------------------------------------------------------------------")  
+            self._log(f"\nTask 3: (Processing file {self.radar_file.name})")
+
 
         # Task 3.1 Kernel generieren und in Instanz abspeichern
-        self.CFAR_kernel= CFAR_kernel = self.create_cfar_kernel(
+        self.CFAR_kernel = self.create_cfar_kernel(
             kernel_matrix=self.kernel_matrix,
             train_range=self.train_range,
             train_doppler=self.train_doppler,
@@ -143,34 +156,41 @@ class Radar:
         )
 
         # Task 3.2 Ausgabe der CFAR-Kernel-Kenngrößen im log
-        n_train = int(np.sum(CFAR_kernel == 1))
-        n_guard = int(np.sum(CFAR_kernel == 2))
-        n_cut = int(np.sum(CFAR_kernel == 3))
-        self._log(f"\n - Task 3.1: \n\t- Kernel erzeugt: Trainingszellen={n_train}, Guard-Zellen={n_guard}, CUT={n_cut}")
-        self._log(f"\n\t- Kernelgrößen in Doppler-Dimension: Anzahl Trainingszellen = {self.train_doppler}, Anzahl Guardzellen = {self.guard_doppler}")
-        self._log(f"\n\t- Kernelgrößen in Distanz-Dimension: Anzahl Trainingszellen = {self.train_range}, Anzahl Guardzellen = {self.guard_range}")
-
+        self.print_output_cifar()
+        
         # Task 3.3 Kernel als figure plotten
-        title = f"\n -Task 3: CA-CFAR Kernel \n(Train (Distanz,Doppler)={self.train_range},{self.train_doppler} ; Guard (Distanz,Doppler)={self.guard_range},{self.guard_doppler})"
-        self.plot_cfar_kernel(self.CFAR_kernel, title=title)
+        self.plot_cfar_kernel(self.CFAR_kernel)
 
         # Task 3.3 CA-CFAR-Kernel auf Range-Doppler-Map anwenden und Schwellenwerte berechnen
-        self._log(f"\n - Task 3.3: \n\t- Berechne CA-CFAR Schwellenwerte (threshold_factor={self.threshold_factor})")
-        thresholds = self.compute_cfar_thresholds(data=None, kernel=self.CFAR_kernel, threshold_factor=self.threshold_factor, pad_fill=0)
+        self.thresholds = self.compute_cfar_thresholds(data=None, kernel=self.CFAR_kernel, threshold_factor=self.threshold_factor, pad_fill=0)
+
             
         # Task 3.4 Visualisierung der Schwellwert-Map
-        self.plot_cfar_threshold_map(title=f"Task 3: CA-CFAR Schwellwert Map (Faktor = {self.threshold_factor})")
+        #self.plot_cfar_threshold_map(title=f"Task 3: CA-CFAR Schwellwert Map (Faktor = {self.threshold_factor})")
+        #print(self.threshold_factor)
+
+        # plotte an dieser stelle in einer tabelle die ich zoomen kann mit den dimensionen des arrays self.treshold_factor immer den wert mit den ersten zwei nachkomastellen
+
 
         # Task 3.5 CFAR-3D-Plot mit Overlay der Schwellenwerte aufrufen
         self.plot_CFAR_results_3d(name="Task 3: All Channels Summed 3D with CFAR", decimate=(1,1), elev=30, azim=-60)
 
         # Task 3.6 Objekte durch Schwellwertvergleich identifizieren und ausgeben
-        self._log(f"\n - Task 3.6: \n\t- Range-Doppler-Map zellenweise mit CA-CFAR Schwellenwerte vergleichen")
-        detections = self.apply_cfar_detection(data=self.fft_shifted, thresholds=self.cfar_thresholds)
+        detections = self.apply_cfar_detection(data=self.fft_shifted, thresholds=self.thresholds)
+
+        
 
         # Task 3.7 Visualisierung der detektierten Objekte als 2D-Plot
-        self.plot_cfar_detections(name=f"CFAR Detections (factor={self.threshold_factor})", Task="3.7")
+        self.plot_cfar_detections(name=f"CFAR Detections (factor={self.threshold_factor})", Task="3.7", mode=1) # mode=1 für bins / mode = 0 für meter
 
+
+    def Task_Step_4(self):
+        if self.output_print:
+            # Task 2: Print Key Parameters and Plot Range-Doppler Map
+            self._log(f"\n------------------------------------------------------------------------------------------------")
+            self._log(f"------------------------------------------------------------------------------------------------")
+            self._log(f"\nTask 4: (Processing file {self.radar_file.name})")
+       
 
     ################
     # FOR TASK 1   #
@@ -180,7 +200,9 @@ class Radar:
     def load_radar_cube(self):
         """Load radar cube data from .npy file"""
         self.AntennaArray = np.load(self.radar_file)
-        self._log(f"\n- Task 1.1: \n\t- Load radar cube data from {self.radar_file}")
+
+        if self.output_print:
+            self._log(f"\n- Task 1.1: \n\t- Load radar cube data from {self.radar_file}")
 
     # Helper function to normalize window names
     def _normalize_window_name(self, name):
@@ -214,7 +236,8 @@ class Radar:
 
     def apply_window(self, channel, plot_window=False):
         if plot_window:
-            self._log(f"\n - Task 1.2: \n\t- Apply windowing function(s) with '{self.Range_window_type}' for Range and '{self.Doppler_window_type}' for Doppler")
+            if self.output_print:
+                self._log(f"\n - Task 1.2: \n\t- Apply windowing function(s) with '{self.Range_window_type}' for Range and '{self.Doppler_window_type}' for Doppler")
 
         # Task 1.2 Apply different windowing functions and process
         if isinstance(self.window_name, (list, tuple)):
@@ -242,8 +265,9 @@ class Radar:
         self.window_2d = np.outer(self.window_range, self.window_doppler)
 
         if plot_window:
-            # im 3d plot die window funktion anzeigen
-            self._log(f"\t- Plot 2D Window Function (Range: {self.Range_window_type} x Doppler: {self.Doppler_window_type})")
+            if self.output_print:
+                # im 3d plot die window funktion anzeigen
+                self._log(f"\t- Plot 2D Window Function (Range: {self.Range_window_type} x Doppler: {self.Doppler_window_type})")
             try:
                 # Achsen: Doppler (Spalten) und Range (Zeilen)
                 doppler_axis = np.arange(self.num_chirps)
@@ -266,31 +290,12 @@ class Radar:
     def perform_2d_fft(self, first_time=True):   
         # Führe die 2D-FFT durch
         if first_time:
-            self._log(f"\n - Task 1.3: \n\t- Perform 2D-FFT on windowed data with shape {self.windowed_data.shape} for single channel {self.channel}")
+            if self.output_print:
+                self._log(f"\n - Task 1.3: \n\t- Perform 2D-FFT on windowed data with shape {self.windowed_data.shape} for single channel {self.channel}")
 
         self.fft_result_2d = np.fft.fft2(self.windowed_data)
         # 1. Verschiebe den Nullfrequenzpunkt (wie bisher)
         self.fft_shifted = np.fft.fftshift(self.fft_result_2d, axes=(1,))
-
-
-
-    def plot_fft_result(self):  
-        # Task 1.4 Plot FFT Ergebnis
-        self._log(f"\n - Task 1.4: \n\t- Plot FFT Result for single channel {self.channel} without axes scaling")
-
-        # 1. Berechne die absolute Amplitude in dB (wie bisher)
-        magnitude_db = 20 * np.log10(np.abs(self.fft_shifted) + 1e-10)
-
-        # 2. Normalisieren auf den Peak (0 dB)
-        # Finde den maximalen Wert und ziehe ihn von allen Werten ab.
-        self.normalized_db = magnitude_db - np.max(magnitude_db)
-
-        # 4. Plotte die normalisierten Daten (ohne skalierte Achsen -> einfache Darstellung)
-        title = f'Task 1: Range/Doppler Heat Map over channel {self.channel} \nData File: {self.radar_file.name}'
-        self._generic_plot_2d(self.normalized_db, extent=None,
-                              xlabel='Doppler Index (Bins)', ylabel='Range Index (Bins)',
-                              title=title, cmap='seismic', vmin=-50, vmax=0, colorbar_label='Relative Amplitude (dB)')
-
 
 
     ################
@@ -298,20 +303,24 @@ class Radar:
     ################
 
     def _print_key_parameters(self):
-        self._log(f"\t   - Chirp Slope: {self.chirp_slope:.2e} Hz/s")
-        self._log(f"\t   - Max Range: {self.range_max:.2f} m")
-        self._log(f"\t   - Range Resolution: {self.range_res:.2f} m")
-        self._log(f"\t   - Max Velocity: {self.vel_max:.3f} m/s")
-        self._log(f"\t   - Velocity Resolution: {self.vel_res:.4f} m/s")
+        if self.output_print:
+            self._log(f"\t   - Chirp Slope: {self.chirp_slope:.2e} Hz/s")
+            self._log(f"\t   - Max Range: {self.range_max:.2f} m")
+            self._log(f"\t   - Range Resolution: {self.range_res:.2f} m")
+            self._log(f"\t   - Max Velocity: {self.vel_max:.3f} m/s")
+            self._log(f"\t   - Velocity Resolution: {self.vel_res:.4f} m/s")
         
 
 
 
     def calculation_of_key_parameter(self):
-        self._log(f"\n - Task 2.1: \n\t- Calculation of Key Parameters")
+        if self.output_print:
+            self._log(f"\n - Task 2.1: \n\t- Calculation of Key Parameters")
 
         # 1. Chirp Slope
-        self.chirp_slope = self.B / ((1/self.f_sampling)*self.num_samples) 
+        if self.chirp_slope == 0:
+            self.chirp_slope = self.B / ((1/self.f_sampling)*self.num_samples) 
+        #print(self.chirp_slope/1e12, " Hz/s")
 
         # 2. Range-Resolution
         self.range_res = self.c / (2 * self.B)
@@ -320,7 +329,8 @@ class Radar:
         self.range_max = (self.f_sampling * self.c) / (2 * self.chirp_slope)
 
         # 4. Max Velocity
-        self.vel_max = self.c / (2 * self.f_center * self.tc * self.Tx_Channels)
+        # MARKER 4 bei MRR richtiges Ergebnis und USRR falsch?
+        self.vel_max = self.c / (4 * self.f_center * self.tc * self.Tx_Channels)
 
         # 5. Velocity Resolution
         self.vel_res = self.c / (2 * self.f_center * self.tc * self.num_chirps * self.Tx_Channels)  
@@ -339,7 +349,6 @@ class Radar:
 
 
     def plot_fft_results(self, name="", Task="2.2"):
-        self._log(f"\n - Task {Task}: \n\t- Plot Range-Doppler Map with Scaled Axes for {name}")
 
         #fft_shifted = self.fft_result_2d # np.fft.fftshift(self.fft_result_2d)
         # 2. Berechne die absolute Amplitude in dB (wie bisher)
@@ -350,17 +359,30 @@ class Radar:
         self.normalized_db = magnitude_db - np.max(magnitude_db)
 
         # Plot FFT Results
-        range_axis, velocity_axis, plot_extent = self._prepare_range_velocity_axes()
+        if Task[0] == '1':
+            if self.output_print:
+                self._log(f"\n - Task 1.4: \n\t- Plot FFT Result for single channel {self.channel} without axes scaling")
 
-        title = f'Task 2: Range-Doppler Plot (Scaled) - {name} \nData File: {self.radar_file.name}'
-        self._generic_plot_2d(self.normalized_db, extent=plot_extent,
-                              xlabel='Velocity (m/s)', ylabel='Distance (m)',
-                              title=title, cmap='seismic', vmin=-50, vmax=0, colorbar_label='Relative Amplitude (dB)')
+            title = f'Task 1: Range/Doppler Heat Map over channel {self.channel} \nData File: {self.radar_file.name}'
+            self._generic_plot_2d(self.normalized_db, extent=None,
+                                xlabel='Doppler Index (Bins)', ylabel='Range Index (Bins)',
+                                title=title, cmap='seismic', vmin=-50, vmax=0, colorbar_label='Relative Amplitude (dB)')
+        if Task[0] == '2':
+            if self.output_print:
+                self._log(f"\n - Task {Task}: \n\t- Plot Range-Doppler Map with Scaled Axes for {name}")
+
+            range_axis, velocity_axis, plot_extent = self._prepare_range_velocity_axes()
+
+            title = f'Task 2: Range-Doppler Plot (Scaled) - {name} \nData File: {self.radar_file.name}'
+            self._generic_plot_2d(self.normalized_db, extent=plot_extent,
+                                xlabel='Velocity (m/s)', ylabel='Distance (m)',
+                                title=title, cmap='seismic', vmin=-50, vmax=0, colorbar_label='Relative Amplitude (dB)')
 
 
 
     def plot_fft_results_3d(self, name="", decimate=(1,1), elev=30, azim=-60):
-        self._log(f"\t- 3D Plot of Range-Doppler Map for {name}")    
+        if self.output_print:
+            self._log(f"\t- 3D Plot of Range-Doppler Map for {name}")    
 
         """
         3D-Plot der bereits berechneten Range-Doppler-Daten (self.normalized_db).
@@ -421,9 +443,18 @@ class Radar:
 
         return kernel
 
+    def print_output_cifar(self):
+        n_train = int(np.sum(self.CFAR_kernel == 1))
+        n_guard = int(np.sum(self.CFAR_kernel == 2))
+        n_cut = int(np.sum(self.CFAR_kernel == 3))
+
+        if self.output_print:
+            self._log(f"\n - Task 3.1: \n\t- Kernel erzeugt: Trainingszellen={n_train}, Guard-Zellen={n_guard}, CUT={n_cut}")
+            self._log(f"\n\t- Kernelgrößen in Doppler-Dimension: Anzahl Trainingszellen = {self.train_doppler}, Anzahl Guardzellen = {self.guard_doppler}")
+            self._log(f"\n\t- Kernelgrößen in Distanz-Dimension: Anzahl Trainingszellen = {self.train_range}, Anzahl Guardzellen = {self.guard_range}")
 
 
-    def plot_cfar_kernel(self, kernel, title="CA-CFAR Kernel", figsize=(6,6), origin='lower'):
+    def plot_cfar_kernel(self, kernel, figsize=(6,6), origin='lower'):
         """
         Visualisiere den CFAR-Kernel:
           - Trainingszellen: türkis
@@ -436,8 +467,12 @@ class Radar:
         import matplotlib.patches as mpatches
         import matplotlib.patches as patches
 
+        title = f"\n -Task 3: CA-CFAR Kernel \n(Train (Distanz,Doppler)={self.train_range},{self.train_doppler} ; Guard (Distanz,Doppler)={self.guard_range},{self.guard_doppler})"
+        
+
         kernel = np.asarray(kernel, dtype=np.int8)
         rows, cols = kernel.shape
+        #print(f"\n - Task 3.2: \n\t- Plot CFAR Kernel with shape {kernel.shape}")
 
         # Farbliste für Codes 0..3
         colors = ['lightgray', '#40E0D0', 'green', 'orange']  # 0=outside,1=train,2=guard,3=CUT
@@ -520,6 +555,11 @@ class Radar:
          - self.cfar_train_counts
          - self.cfar_threshold_factor
         """
+
+        if self.output_print:
+            self._log(f"\n - Task 3.3: \n\t- Berechne CA-CFAR Schwellenwerte (threshold_factor={self.threshold_factor})")
+
+
         # Validierung / Default-Handling
         if data is None:
             if hasattr(self, "fft_shifted"):
@@ -562,9 +602,10 @@ class Radar:
         self.cfar_train_counts = train_counts
         self.cfar_threshold_factor = threshold_factor
 
-        self._log(f"\t- CA-CFAR Schwellenwerte berechnet (threshold_factor={threshold_factor}).")
-        self._log(f"\t  - Kernel-Trainingszellen (global): {n_train_total}")
-        self._log(f"\t  - Shape thresholds: {thresholds.shape}")
+        if self.output_print:
+            self._log(f"\t- CA-CFAR Schwellenwerte berechnet (threshold_factor={threshold_factor}).")
+            self._log(f"\t  - Kernel-Trainingszellen (global): {n_train_total}")
+            self._log(f"\t  - Shape thresholds: {thresholds.shape}")
 
         return thresholds
 
@@ -600,17 +641,14 @@ class Radar:
          - compute_cfar_thresholds() muss vorher ausgeführt worden sein (z.B. in Task_Step_3);
            falls nicht vorhanden, wird compute_cfar_thresholds() automatisch aufgerufen.
         """
-        self._log(f"\t- 3D CFAR-Overlay Plot for {name}")
+
+        if self.output_print:
+            self._log(f"\t- 3D CFAR-Overlay Plot for {name}")
 
         # Sicherstellen, dass Range-Doppler-Daten vorhanden sind
         if not hasattr(self, "normalized_db") or not hasattr(self, "fft_shifted"):
             raise RuntimeError("FFT-Daten fehlen. Führe zuvor Task_Step_1/Task_Step_2 aus.")
 
-        # Falls Schwellenwerte noch nicht vorhanden: berechnen
-        if not hasattr(self, "cfar_thresholds"):
-            self._log("\t- CFAR-Schwellenwerte nicht gefunden -> berechne mit aktuellen Parametern.")
-            self.compute_cfar_thresholds(data=None, kernel=self.CFAR_kernel if hasattr(self, "CFAR_kernel") else None,
-                                         threshold_factor=self.threshold_factor, pad_fill=0)
 
         # Temporär plt.show unterdrücken beim Aufruf der vorhandenen 3D-Plot-Funktion
         old_show = plt.show
@@ -632,7 +670,8 @@ class Radar:
         # Hole und verarbeite CFAR-Schwellen (Power)
         thr = getattr(self, "cfar_thresholds", None)
         if thr is None:
-            self._log("\t- Keine CFAR-Schwellen vorhanden, nichts zu überlagern.")
+            if self.output_print:
+                self._log("\t- Keine CFAR-Schwellen vorhanden, nichts zu überlagern.")
             plt.show()
             return
 
@@ -681,7 +720,7 @@ class Radar:
             try:
                 surf_thr = ax.plot_surface(Vp, Rp, Z_plot_thr, facecolors=rgba, linewidth=0, antialiased=True, shade=False)
             except Exception as e:
-                self._log(f"\t- Warnung: Overlay der Threshold-Oberfläche fehlgeschlagen: {e}")
+                print(f"\t- Warnung: Overlay der Threshold-Oberfläche fehlgeschlagen: {e}")
 
             # Colorbar für Threshold-Overlay hinzufügen
             try:
@@ -692,7 +731,7 @@ class Radar:
             except Exception:
                 pass
         else:
-            self._log("\t- Keine gültigen Threshold-Werte zum Plotten.")
+            print("\t- Keine gültigen Threshold-Werte zum Plotten.")
 
         # Finale Anpassungen und Anzeige
         ax.set_title(f"{ax.get_title()}  (mit CFAR-Thresholds)")
@@ -708,6 +747,11 @@ class Radar:
         Daten werden in Leistung (power = |x|^2) verglichen mit thresholds (power).
         """
 
+
+        if self.output_print:
+            self._log(f"\n - Task 3.6: \n\t- Range-Doppler-Map zellenweise mit CA-CFAR Schwellenwerte vergleichen")
+
+        
         # Formprüfungen (threshold und data müssen gleich groß sein)
         if data.shape != thresholds.shape:
             raise ValueError(f"Shape mismatch: data.shape={data.shape}, thresholds.shape={thresholds.shape}")
@@ -722,12 +766,13 @@ class Radar:
         # Speichern und Log
         self.cfar_detections = detections
         n_det = int(np.sum(detections))
-        self._log(f"\t- CFAR-Detektionen berechnet: {n_det} Treffer (1 = Objekt).")
+        if self.output_print:   
+            self._log(f"\t- CFAR-Detektionen berechnet: {n_det} Treffer (1 = Objekt).")
 
         return detections
 
 
-    def plot_cfar_detections(self, name="", Task="3.7"):
+    def plot_cfar_detections(self, name="", Task="3.7", mode=1): # mode 1=vel and m / 2 = bins
         """
         Zeigt die Range-Doppler-Map, auf die die CFAR-Detektionen (0/1) angewendet wurden.
         Vorgehen:
@@ -736,7 +781,8 @@ class Radar:
          - Benutze dieselben Achsen-/Farb-Parameter wie `plot_fft_results` für direkte Vergleichbarkeit.
         Rückgabe: die gezeigte, maskierte, normalisierte dB-Map.
         """
-        self._log(f"\n - Task {Task}: \n\t- Plot Range-Doppler Map mit CFAR-Maskierung (zeigt Detektionsergebnisse)")
+        if self.output_print:
+            self._log(f"\n - Task {Task}: \n\t- Plot Range-Doppler Map mit CFAR-Maskierung (zeigt Detektionsergebnisse)")
 
         # Erzeuge magnitude und Normalisierung wie in plot_fft_results
         magnitude_db = 20.0 * np.log10(np.abs(self.fft_shifted) + 1e-10)
@@ -757,19 +803,28 @@ class Radar:
         amplitude_db_masked = 20.0 * np.log10(amp_masked + 1e-20)
         normalized_masked_db = amplitude_db_masked - peak_db
 
-        # Achsenskalierung
-        range_axis, velocity_axis, plot_extent = self._prepare_range_velocity_axes()
+        if mode == 1:
+            # Achsenskalierung
+            range_axis, velocity_axis, plot_extent = self._prepare_range_velocity_axes()
 
-        title = f'Task {Task}: CFAR-masked Range-Doppler - {name} \nData File: {self.radar_file.name}'
-        # gleiche Farben / Skala wie plot_fft_results
-        self._generic_plot_2d(normalized_masked_db, extent=plot_extent,
-                              xlabel='Velocity (m/s)', ylabel='Distance (m)',
-                              title=title, cmap='seismic', vmin=-50, vmax=0, colorbar_label='Relative Amplitude (dB)')
-        
+            title = f'Task {Task}: CFAR-masked Range-Doppler - {name} \nData File: {self.radar_file.name}'
+            # gleiche Farben / Skala wie plot_fft_results
+            self._generic_plot_2d(normalized_masked_db, extent=plot_extent,
+                                xlabel='Velocity (m/s)', ylabel='Distance (m)',
+                                title=title, cmap='seismic', vmin=-50, vmax=0, colorbar_label='Relative Amplitude (dB)')
+        if mode == 2:
+            title = f'Task {Task}: CFAR-masked Range-Doppler - {name} \nData File: {self.radar_file.name}'
+            # gleiche Farben / Skala wie plot_fft_results
+            self._generic_plot_2d(normalized_masked_db, extent=None,
+                                xlabel='Doppler Index (Bins)', ylabel='Range Index (Bins)',
+                                title=title, cmap='seismic', vmin=-50, vmax=0, colorbar_label='Relative Amplitude (dB)')
+
+
         # speichere für externe Nutzung und return
         self.normalized_cfar_masked_db = normalized_masked_db
         return normalized_masked_db
     
+
 
     ########################
     # GENERIC PLOT HELPERS
@@ -812,12 +867,9 @@ class Radar:
         mappable = cm.ScalarMappable(norm=norm, cmap=cmap)
         mappable.set_array(Z)
 
+        # Verwende die originalen Z-Werte für die Farbzuordnung
         facecolors = mappable.to_rgba(Z)
         surf = ax.plot_surface(X, Y, Z, facecolors=facecolors, linewidth=0, antialiased=True, shade=False)
-        # Clip Z to the colorbar range so Z-axis matches the color scale
-        Z_plot = np.clip(Z, z_min, z_max)
-        facecolors = mappable.to_rgba(Z_plot)
-        surf = ax.plot_surface(X, Y, Z_plot, facecolors=facecolors, linewidth=0, antialiased=True, shade=False)
 
         cbar = fig.colorbar(mappable, ax=ax, shrink=0.6, pad=0.1)
         cbar.set_label(zlabel)
