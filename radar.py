@@ -26,7 +26,7 @@ class Radar:
             print(msg, end='')
 
 
-    def __init__(self, radar_file, f_center, B, f_sampling, num_samples, tc, chirp_slope, num_chirps, Rx_gain, Tx_Channels, Rx_Channels, num=0, use_tk=False, output_print=True):
+    def __init__(self, radar_file, factor_formular_max_velocity, f_center, B, f_sampling, num_samples, tc, chirp_slope, num_chirps, Rx_gain, Tx_Channels, Rx_Channels, num=0, use_tk=False, output_print=True):
         # Path to radar cube data
         self.radar_file = Path(radar_file + f"{num}.npy")
 
@@ -54,6 +54,8 @@ class Radar:
         
         self.Tx_Channels = Tx_Channels
         self.Rx_Channels = Rx_Channels
+
+        self.factor_formular_max_velocity = factor_formular_max_velocity  # Faktor im Nenner der Formel zur Berechnung der maximalen Geschwindigkeit (2 für TDM-MIMO)
 
 
         # Windowing parameters
@@ -344,7 +346,7 @@ class Radar:
 
         # 4. Max Velocity
         # MARKER 4 bei MRR richtiges Ergebnis und USRR falsch?
-        self.vel_max = self.c / (2 * self.f_center * self.tc * self.Tx_Channels)
+        self.vel_max = self.c / (self.factor_formular_max_velocity * self.f_center * self.tc * self.Tx_Channels)
 
         # 5. Velocity Resolution
         self.vel_res = self.c / (2 * self.f_center * self.tc * self.num_chirps * self.Tx_Channels)  

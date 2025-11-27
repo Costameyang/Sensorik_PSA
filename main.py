@@ -7,6 +7,8 @@ from radar import Radar
 def USRR_Dynamic_Config():
     # Paths to radar cube data
     radar_file = "RadarCube/USRR_Dynamic10m/3D/RadarCube"
+    factor_formular_max_velocity = 2
+
     # Parameter of Radar
     f_center = 78.26375e9  # Center Frequency (Hz)
     B = 2.5275e9           # Radar Bandwidth (Hz)
@@ -20,13 +22,14 @@ def USRR_Dynamic_Config():
     Tx_Channels = 12       # Aus "TDM-MIMO (12 Tx..."
     Rx_Channels = 16       # Aus "TDM-MIMO (...16 Rx)"
   
-    return radar_file, f_center, B, f_sampling, num_samples, tc, chirp_slope, num_chirps, Rx_gain, Tx_Channels, Rx_Channels
+    return radar_file, factor_formular_max_velocity, f_center, B, f_sampling, num_samples, tc, chirp_slope, num_chirps, Rx_gain, Tx_Channels, Rx_Channels
 
 
 def MRR_CornField_Config():
     # Paths to radar cube data
     radar_file = "RadarCube/MRR_CornField/3D/RadarCube"
-    
+    factor_formular_max_velocity = 4
+
     # Parameter of Radar
     f_center = 77.27e9     # Center Frequency (Hz)
     B = 0.26e9             # Radar Bandwidth (Hz)
@@ -40,27 +43,27 @@ def MRR_CornField_Config():
     Tx_Channels = 12       # Aus "TDM-MIMO (12 Tx..."
     Rx_Channels = 16       # Aus "TDM-MIMO (...16 Rx)"
   
-    return radar_file, f_center, B, f_sampling, num_samples, tc, chirp_slope, num_chirps, Rx_gain, Tx_Channels, Rx_Channels
+    return radar_file, factor_formular_max_velocity, f_center, B, f_sampling, num_samples, tc, chirp_slope, num_chirps, Rx_gain, Tx_Channels, Rx_Channels
 
 
 def main():
     
     # Create Radar object
-    USSR_radar = Radar(*USRR_Dynamic_Config(), num=1, use_tk=True, output_print=True)
+    #USSR_radar = Radar(*USRR_Dynamic_Config(), num=1, use_tk=True, output_print=True)
     
     # Tasks ausführen
-    USSR_radar.Task_Step_1()
-    USSR_radar.Task_Step_2()
-    USSR_radar.Task_Step_3()
-    USSR_radar.Task_Step_4()
+    #USSR_radar.Task_Step_1()
+    #USSR_radar.Task_Step_2()
+    #USSR_radar.Task_Step_3()
+    #USSR_radar.Task_Step_4()
 
     # Create Radar object
-    #MRR_radar = Radar(*MRR_CornField_Config(), num=0, use_tk=True, output_print=True)
+    MRR_radar = Radar(*MRR_CornField_Config(), num=0, use_tk=True, output_print=True)
     # Tasks ausführen
-    #MRR_radar.Task_Step_1()
-    #MRR_radar.Task_Step_2()
-    #MRR_radar.Task_Step_3()
-    #MRR_radar.Task_Step_4()
+    MRR_radar.Task_Step_1()
+    MRR_radar.Task_Step_2()
+    MRR_radar.Task_Step_3()
+    MRR_radar.Task_Step_4()
 
 if __name__ == "__main__":
     main()
