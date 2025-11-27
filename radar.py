@@ -844,12 +844,10 @@ class Radar:
     def plot_range_profile_at_detection(self, detection_index=0):
         """
         Zeigt das Entfernungsprofil (Range-Dimension) für eine bestimmte Detektion.
-        Verwendet jetzt die detections_3d Liste (falls vorhanden) statt cfar_detections,
-        um mehrere Objekte pro Range-Doppler-Bin korrekt darzustellen.
+        Verwendet absolute Power in dB (nicht normalisiert), um positive Werte zu zeigen.
         """
         # Prüfe ob detections_3d vorhanden (aus Task 4)
         if hasattr(self, 'detections_3d') and len(self.detections_3d) > 0:
-            # Verwende die erweiterte Liste mit Winkelinformationen
             if detection_index >= len(self.detections_3d):
                 self._log(f"Detection Index {detection_index} außerhalb des Bereichs (max: {len(self.detections_3d)-1})")
                 return
@@ -883,12 +881,13 @@ class Radar:
         # Extrahiere Range-Profil bei dieser Doppler-Position
         range_profile = self.fft_shifted[:, d_bin]
         
-        # Konvertiere zu dB und normalisiere
-        magnitude_db = 20 * np.log10(np.abs(range_profile) + 1e-10)
-        normalized_db = magnitude_db - np.max(magnitude_db)
+        # NEU: Konvertiere zu absoluter Power in dB (NICHT normalisiert)
+        # Power = |signal|^2, dann 10*log10 für Power in dB
+        power_linear = np.abs(range_profile) ** 2
+        power_db = 10 * np.log10(power_linear + 1e-20)  # Vermeide log(0)
         
-        # Finde den tatsächlichen Peak im 1D-Profil
-        peak_bin = np.argmax(normalized_db)
+        # Finde den Peak im Power-Spektrum
+        peak_bin = np.argmax(power_db)
         
         # Erstelle Achsen
         velocity_axis = np.linspace(-self.vel_max, self.vel_max, self.num_chirps)
@@ -901,24 +900,18 @@ class Radar:
         
         # Plot erstellen
         plt.figure(figsize=(12, 6))
-        plt.plot(range_axis, normalized_db, 'b-', linewidth=1.5, label='Range Profile')
+        plt.plot(range_axis, power_db, 'b-', linewidth=1.5, label='Range Profile')
         
         # Markiere die CFAR-Detektion
         plt.axvline(x=range_detection, color='r', linestyle='--', linewidth=2, 
                     label=f'CFAR Detection at {range_detection:.2f} m')
-        plt.plot(range_detection, normalized_db[r_bin], 'ro', markersize=10, 
-                label=f'CFAR Value: {normalized_db[r_bin]:.1f} dB')
+        plt.plot(range_detection, power_db[r_bin], 'ro', markersize=10, 
+                label=f'CFAR Value: {power_db[r_bin]:.1f} dB')
+    
         
-        # Markiere den tatsächlichen Peak (falls unterschiedlich)
-        if peak_bin != r_bin:
-            plt.axvline(x=range_peak, color='green', linestyle=':', linewidth=2, 
-                        label=f'1D Peak at {range_peak:.2f} m')
-            plt.plot(range_peak, normalized_db[peak_bin], 'go', markersize=10, 
-                    label=f'Peak Value: {normalized_db[peak_bin]:.1f} dB (0 dB)')
-        
-        # Beschriftung - erweitert mit Winkelinformation falls vorhanden
+        # Beschriftung
         plt.xlabel('Range (m)', fontsize=12)
-        plt.ylabel('Relative Magnitude (dB)', fontsize=12)
+        plt.ylabel('Receive Power (dB)', fontsize=12)  # NEU: Absolute Power
         
         title_str = f'Range Profile at Velocity = {velocity_m_s:.3f} m/s ({velocity_m_s*3.6:.2f} km/h)\n'
         title_str += f'Detection #{detection_index+1} (Range Bin: {r_bin}, Doppler Bin: {d_bin}'
@@ -929,7 +922,11 @@ class Radar:
         plt.title(title_str, fontsize=14)
         plt.grid(True, alpha=0.3)
         plt.legend(fontsize=10)
-        plt.ylim([-60, 5])
+        
+        # NEU: Automatische Y-Achsen-Limits basierend auf Daten
+        y_min = np.percentile(power_db[np.isfinite(power_db)], 1)  # 1. Perzentil
+        y_max = np.max(power_db[np.isfinite(power_db)]) + 5
+        plt.ylim([y_min, y_max])
         
         plt.tight_layout()
         plt.show()
@@ -938,8 +935,8 @@ class Radar:
         if self.output_print:
             self._log(f"\n - Range Profile Plot:")
             self._log(f"\t- Detection #{detection_index+1}")
-            self._log(f"\t- CFAR Detection: {range_detection:.2f} m (Bin {r_bin}, Value: {normalized_db[r_bin]:.1f} dB)")
-            self._log(f"\t- 1D Peak: {range_peak:.2f} m (Bin {peak_bin}, Value: 0.0 dB)")
+            self._log(f"\t- CFAR Detection: {range_detection:.2f} m (Bin {r_bin}, Power: {power_db[r_bin]:.1f} dB)")
+            self._log(f"\t- 1D Peak: {range_peak:.2f} m (Bin {peak_bin}, Power: {power_db[peak_bin]:.1f} dB)")
             self._log(f"\t- Velocity: {velocity_m_s:.3f} m/s = {velocity_m_s*3.6:.2f} km/h (Bin {d_bin})")
             if has_angle_info:
                 self._log(f"\t- Azimuth Angle: {azimuth_deg:.1f}°")
