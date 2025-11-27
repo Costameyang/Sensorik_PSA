@@ -183,13 +183,27 @@ class Radar:
         # Task 3.7 Visualisierung der detektierten Objekte als 2D-Plot
         self.plot_cfar_detections(name=f"CFAR Detections (factor={self.threshold_factor})", Task="3.7", mode=1) # mode=1 für bins / mode = 0 für meter
 
+        # Task 3.8 Visualisierung der detektierten Objekte als Velocity Profile
+        self.plot_range_profile_at_detection(detection_index=0)
+
 
     def Task_Step_4(self):
         if self.output_print:
-            # Task 2: Print Key Parameters and Plot Range-Doppler Map
             self._log(f"\n------------------------------------------------------------------------------------------------")
             self._log(f"------------------------------------------------------------------------------------------------")
-            self._log(f"\nTask 4: (Processing file {self.radar_file.name})")
+            self._log(f"\nTask 4: Angle Estimation & 3D Localization (Processing file {self.radar_file.name})")
+        
+        # 4.1 Berechne Wellenlänge und Antennenabstand
+        self._calculate_antenna_parameters()
+        
+        # 4.2 Erzeuge virtuelle Antennen-Array (MIMO)
+        self._create_virtual_array()
+        
+        # 4.3 Winkelschätzung für alle detektierten Objekte
+        self.detections_3d = self._estimate_angles_for_detections()
+        
+        # 4.4 3D-Visualisierung der Objekte
+        self._plot_3d_detections()
        
 
     ################
@@ -330,7 +344,7 @@ class Radar:
 
         # 4. Max Velocity
         # MARKER 4 bei MRR richtiges Ergebnis und USRR falsch?
-        self.vel_max = self.c / (4 * self.f_center * self.tc * self.Tx_Channels)
+        self.vel_max = self.c / (2 * self.f_center * self.tc * self.Tx_Channels)
 
         # 5. Velocity Resolution
         self.vel_res = self.c / (2 * self.f_center * self.tc * self.num_chirps * self.Tx_Channels)  
@@ -824,6 +838,317 @@ class Radar:
         self.normalized_cfar_masked_db = normalized_masked_db
         return normalized_masked_db
     
+
+    def plot_range_profile_at_detection(self, detection_index=0):
+        """
+        Zeigt das Entfernungsprofil (Range-Dimension) für eine bestimmte Detektion.
+        Verwendet jetzt die detections_3d Liste (falls vorhanden) statt cfar_detections,
+        um mehrere Objekte pro Range-Doppler-Bin korrekt darzustellen.
+        """
+        # Prüfe ob detections_3d vorhanden (aus Task 4)
+        if hasattr(self, 'detections_3d') and len(self.detections_3d) > 0:
+            # Verwende die erweiterte Liste mit Winkelinformationen
+            if detection_index >= len(self.detections_3d):
+                self._log(f"Detection Index {detection_index} außerhalb des Bereichs (max: {len(self.detections_3d)-1})")
+                return
+            
+            det = self.detections_3d[detection_index]
+            r_bin = det['range_bin']
+            d_bin = det['doppler_bin']
+            azimuth_deg = det['azimuth_deg']
+            has_angle_info = True
+            
+        # Fallback auf cfar_detections (nur Task 3)
+        elif hasattr(self, 'cfar_detections'):
+            det_indices = np.argwhere(self.cfar_detections == 1)
+            
+            if len(det_indices) == 0:
+                self._log("Keine Detektionen vorhanden.")
+                return
+            
+            if detection_index >= len(det_indices):
+                self._log(f"Detection Index {detection_index} außerhalb des Bereichs (max: {len(det_indices)-1})")
+                return
+            
+            r_bin, d_bin = det_indices[detection_index]
+            azimuth_deg = None
+            has_angle_info = False
+            
+        else:
+            self._log("Fehler: Keine CFAR-Detektionen vorhanden. Führe zuerst Task_Step_3 aus.")
+            return
+        
+        # Extrahiere Range-Profil bei dieser Doppler-Position
+        range_profile = self.fft_shifted[:, d_bin]
+        
+        # Konvertiere zu dB und normalisiere
+        magnitude_db = 20 * np.log10(np.abs(range_profile) + 1e-10)
+        normalized_db = magnitude_db - np.max(magnitude_db)
+        
+        # Finde den tatsächlichen Peak im 1D-Profil
+        peak_bin = np.argmax(normalized_db)
+        
+        # Erstelle Achsen
+        velocity_axis = np.linspace(-self.vel_max, self.vel_max, self.num_chirps)
+        range_axis = np.linspace(0, self.range_max, self.num_samples)
+        
+        # Physikalische Werte
+        range_detection = range_axis[r_bin]      # CFAR-Detektion
+        range_peak = range_axis[peak_bin]        # 1D-Peak
+        velocity_m_s = velocity_axis[d_bin]
+        
+        # Plot erstellen
+        plt.figure(figsize=(12, 6))
+        plt.plot(range_axis, normalized_db, 'b-', linewidth=1.5, label='Range Profile')
+        
+        # Markiere die CFAR-Detektion
+        plt.axvline(x=range_detection, color='r', linestyle='--', linewidth=2, 
+                    label=f'CFAR Detection at {range_detection:.2f} m')
+        plt.plot(range_detection, normalized_db[r_bin], 'ro', markersize=10, 
+                label=f'CFAR Value: {normalized_db[r_bin]:.1f} dB')
+        
+        # Markiere den tatsächlichen Peak (falls unterschiedlich)
+        if peak_bin != r_bin:
+            plt.axvline(x=range_peak, color='green', linestyle=':', linewidth=2, 
+                        label=f'1D Peak at {range_peak:.2f} m')
+            plt.plot(range_peak, normalized_db[peak_bin], 'go', markersize=10, 
+                    label=f'Peak Value: {normalized_db[peak_bin]:.1f} dB (0 dB)')
+        
+        # Beschriftung - erweitert mit Winkelinformation falls vorhanden
+        plt.xlabel('Range (m)', fontsize=12)
+        plt.ylabel('Relative Magnitude (dB)', fontsize=12)
+        
+        title_str = f'Range Profile at Velocity = {velocity_m_s:.3f} m/s ({velocity_m_s*3.6:.2f} km/h)\n'
+        title_str += f'Detection #{detection_index+1} (Range Bin: {r_bin}, Doppler Bin: {d_bin}'
+        if has_angle_info:
+            title_str += f', Azimuth: {azimuth_deg:.1f}°'
+        title_str += f')\nData File: {self.radar_file.name}'
+        
+        plt.title(title_str, fontsize=14)
+        plt.grid(True, alpha=0.3)
+        plt.legend(fontsize=10)
+        plt.ylim([-60, 5])
+        
+        plt.tight_layout()
+        plt.show()
+        
+        # Log-Ausgabe
+        if self.output_print:
+            self._log(f"\n - Range Profile Plot:")
+            self._log(f"\t- Detection #{detection_index+1}")
+            self._log(f"\t- CFAR Detection: {range_detection:.2f} m (Bin {r_bin}, Value: {normalized_db[r_bin]:.1f} dB)")
+            self._log(f"\t- 1D Peak: {range_peak:.2f} m (Bin {peak_bin}, Value: 0.0 dB)")
+            self._log(f"\t- Velocity: {velocity_m_s:.3f} m/s = {velocity_m_s*3.6:.2f} km/h (Bin {d_bin})")
+            if has_angle_info:
+                self._log(f"\t- Azimuth Angle: {azimuth_deg:.1f}°")
+
+
+    ################
+    # FOR TASK 4   #
+    ################
+
+    def _calculate_antenna_parameters(self):
+        """Berechne Wellenlänge und Antennenabstände"""
+        self.wavelength = self.c / self.f_center
+        
+        if self.output_print:
+            self._log(f"\n - Task 4.1:")
+            self._log(f"\t- Wellenlänge λ = {self.wavelength*1000:.2f} mm")
+        
+        # Extrahiere Antennenabstände (z.B. aus AntennaPositions)
+        # Annahme: AntennaPositions hat Shape (N_ant, 3) mit [x, y, z] Koordinaten
+        # Berechne Abstände benachbarter Antennen
+        x_positions = self.AntennaPositions[:, 0]
+        y_positions = self.AntennaPositions[:, 1]
+        
+        self.d_azimuth = np.mean(np.diff(np.unique(x_positions)))  # Azimut-Abstand
+        self.d_elevation = np.mean(np.diff(np.unique(y_positions))) if len(np.unique(y_positions)) > 1 else 0
+        
+        if self.output_print:
+            self._log(f"\t- Antennenabstand Azimut: {self.d_azimuth*1000:.2f} mm")
+            if self.d_elevation > 0:
+                self._log(f"\t- Antennenabstand Elevation: {self.d_elevation*1000:.2f} mm")
+
+
+    def _create_virtual_array(self):
+        """Erstelle virtuelles MIMO-Array aus Tx x Rx Kanälen"""
+        if self.output_print:
+            self._log(f"\n - Task 4.2:")
+            self._log(f"\t- Erzeuge virtuelles Array: {self.Tx_Channels} Tx × {self.Rx_Channels} Rx = {self.num_channels} virtuelle Antennen")
+        
+        # Virtuelles Array ist bereits in AntennaArray enthalten
+        # Shape: (num_samples, num_chirps, num_channels)
+        self.num_virtual_antennas = self.num_channels
+
+
+    def _estimate_angles_for_detections(self):
+        """
+        Für jede CFAR-Detektion: Winkel via 1D-FFT über Antennen-Dimension schätzen
+        Findet ALLE signifikanten Peaks im Winkelspektrum (mehrere Objekte pro Range-Doppler-Bin)
+        Returns: Liste von Dictionaries mit {range_bin, doppler_bin, range_m, velocity_m_s, azimuth_deg, elevation_deg, magnitude}
+        """
+        if self.output_print:
+            self._log(f"\n - Task 4.3:")
+            self._log(f"\t- Winkelschätzung für detektierte objekte")
+        
+        detections = []
+        
+        # Finde alle CFAR-Detektionen (1 = Objekt)
+        det_indices = np.argwhere(self.cfar_detections == 1)
+        
+        if self.output_print:
+            self._log(f"\t- Anzahl Range-Doppler-Bins mit Detektionen: {len(det_indices)}")
+        
+        # Achsenvektoren für Konvertierung
+        range_axis = np.linspace(0, self.range_max, self.num_samples)
+        velocity_axis = np.linspace(-self.vel_max, self.vel_max, self.num_chirps)
+        
+        # Parameter für Peak-Findung
+        min_peak_ratio = 0.3  # Peak muss mindestens 30% des Hauptpeaks sein
+        min_peak_distance = 2  # Mindestabstand zwischen Peaks in Bins
+        
+        for idx in det_indices:
+            r_bin, d_bin = idx
+            
+            # Extrahiere komplexe Werte über alle Antennen für diesen Range-Doppler-Bin
+            antenna_signal = self.AntennaArray[r_bin, d_bin, :]
+            
+            # Wende Fenster an
+            window = get_window('hann', len(antenna_signal))
+            antenna_signal_windowed = antenna_signal * window
+            
+            # 1D-FFT über Antennen-Dimension
+            angle_fft = np.fft.fft(antenna_signal_windowed)
+            angle_fft_shifted = np.fft.fftshift(angle_fft)
+            angle_spectrum = np.abs(angle_fft_shifted)
+            
+            # Finde ALLE signifikanten Peaks
+            from scipy.signal import find_peaks
+            
+            # Hauptpeak
+            main_peak_idx = np.argmax(angle_spectrum)
+            main_peak_value = angle_spectrum[main_peak_idx]
+            
+            # Finde alle Peaks über Schwellenwert
+            threshold = main_peak_value * min_peak_ratio
+            peaks, properties = find_peaks(angle_spectrum, 
+                                        height=threshold,
+                                        distance=min_peak_distance)
+            
+            # Wenn keine Peaks gefunden, nutze den Hauptpeak
+            if len(peaks) == 0:
+                peaks = np.array([main_peak_idx])
+            
+            # Konvertiere Bins zu physikalischen Werten (einmal für diesen Range-Doppler-Bin)
+            range_m = range_axis[r_bin]
+            velocity_m_s = velocity_axis[d_bin]
+            
+            # Für jeden gefundenen Peak: erstelle Detektion
+            for angle_bin in peaks:
+                magnitude = angle_spectrum[angle_bin]
+                
+                # Konvertiere FFT-Bin zu Winkel
+                k = angle_bin - len(angle_spectrum) // 2
+                sin_azimuth = (k / len(angle_spectrum)) * (self.wavelength / self.d_azimuth)
+                sin_azimuth = np.clip(sin_azimuth, -1, 1)
+                azimuth_rad = np.arcsin(sin_azimuth)
+                azimuth_deg = np.degrees(azimuth_rad)
+                
+                elevation_deg = 0  # Vereinfachung: nur 2D
+                
+                detections.append({
+                    'range_bin': r_bin,
+                    'doppler_bin': d_bin,
+                    'angle_bin': int(angle_bin),
+                    'range_m': range_m,
+                    'velocity_m_s': velocity_m_s,
+                    'azimuth_deg': azimuth_deg,
+                    'elevation_deg': elevation_deg,
+                    'magnitude': magnitude
+                })
+        
+        if self.output_print:
+            self._log(f"\t- Winkelschätzung abgeschlossen")
+            self._log(f"\t- Anzahl gefundener Objekte (inkl. mehrere pro Bin): {len(detections)}")
+            self._log(f"\t- Beispiel (erste 3 Detektionen):")
+            for i, d in enumerate(detections[:3]):
+                self._log(f"\t  #{i+1}: Range={d['range_m']:.2f}m, Vel={d['velocity_m_s']:.3f}m/s, Az={d['azimuth_deg']:.1f}°")
+        
+        return detections
+
+
+
+
+    def _plot_3d_detections(self):
+        """
+        3D-Plot: Zeige detektierte Objekte im kartesischen Raum (x, y, z)
+        """
+        if self.output_print:
+            self._log(f"\n - Task 4.4:")
+            self._log(f"\t- 3D-Visualisierung der Objekte")
+        
+        if len(self.detections_3d) == 0:
+            self._log(f"\t- Keine Objekte zu plotten")
+            return
+        
+        # Konvertiere zu kartesischen Koordinaten
+        x_coords = []
+        y_coords = []
+        z_coords = []
+        magnitudes = []
+        
+        for det in self.detections_3d:
+            r = det['range_m']
+            az = np.radians(det['azimuth_deg'])
+            el = np.radians(det['elevation_deg'])
+            
+            # Kartesische Koordinaten
+            x = r * np.cos(el) * np.sin(az)
+            y = r * np.cos(el) * np.cos(az)
+            z = r * np.sin(el)
+            
+            x_coords.append(x)
+            y_coords.append(y)
+            z_coords.append(z)
+            magnitudes.append(det['magnitude'])
+        
+        # 3D Scatter Plot
+        fig = plt.figure(figsize=(12, 9))
+        ax = fig.add_subplot(111, projection='3d')
+        
+        # Normalisiere Magnitudes für Farbe/Größe
+        magnitudes = np.array(magnitudes)
+        sizes = 100 + 400 * (magnitudes / magnitudes.max())  # Punktgröße
+        
+        scatter = ax.scatter(x_coords, y_coords, z_coords, 
+                            c=magnitudes, cmap='hot', s=sizes, 
+                            alpha=0.8, edgecolors='black', linewidth=0.5)
+        
+        # Colorbar
+        cbar = plt.colorbar(scatter, ax=ax, shrink=0.6, pad=0.1)
+        cbar.set_label('Signal Magnitude')
+        
+        # Achsenbeschriftung
+        ax.set_xlabel('X (m) - Lateral')
+        ax.set_ylabel('Y (m) - Longitudinal')
+        ax.set_zlabel('Z (m) - Vertical')
+        ax.set_title(f'Task 4: 3D Object Localization\nData File: {self.radar_file.name}')
+        
+        # Setze gleiche Skalierung für alle Achsen
+        max_range = max(abs(min(x_coords + y_coords + z_coords)), 
+                        abs(max(x_coords + y_coords + z_coords)))
+        ax.set_xlim([-max_range, max_range])
+        ax.set_ylim([0, max_range * 2])
+        ax.set_zlim([-max_range, max_range])
+        
+        # Gitter
+        ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.show()
+
+
+
 
 
     ########################

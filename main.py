@@ -46,12 +46,13 @@ def MRR_CornField_Config():
 def main():
     
     # Create Radar object
-    USSR_radar = Radar(*USRR_Dynamic_Config(), num=1, use_tk=True, output_print=False)
+    USSR_radar = Radar(*USRR_Dynamic_Config(), num=1, use_tk=True, output_print=True)
     
     # Tasks ausführen
     USSR_radar.Task_Step_1()
     USSR_radar.Task_Step_2()
     USSR_radar.Task_Step_3()
+    USSR_radar.Task_Step_4()
 
     # Create Radar object
     #MRR_radar = Radar(*MRR_CornField_Config(), num=0, use_tk=True, output_print=True)
@@ -59,6 +60,7 @@ def main():
     #MRR_radar.Task_Step_1()
     #MRR_radar.Task_Step_2()
     #MRR_radar.Task_Step_3()
+    #MRR_radar.Task_Step_4()
 
 if __name__ == "__main__":
     main()
