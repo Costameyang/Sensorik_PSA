@@ -75,6 +75,12 @@ class Radar:
 
         self.window_cifar_max_size = 5  # Fenstergröße für Non-Maximum Suppression bei CFAR (ungerade Zahl)
 
+        # Winkelschätzung Methode: 'cfar' oder 'max'
+        self.angle_detection_method = 'max'  # Wähle zwischen 'cfar' und 'max'
+        self.cfar_1d_train_cells = 10  # Anzahl Trainingszellen für 1D-CFAR
+        self.cfar_1d_guard_cells = 4   # Anzahl Guard-Zellen für 1D-CFAR
+        self.cfar_1d_threshold_factor = 3.0  # Threshold-Faktor für 1D-CFAR
+
         # Load Antenna Array
         antenna_array_path = Path("RadarCube/AntennaArray.npy")
         antenna_array_raw = np.load(antenna_array_path).astype(np.float64)
@@ -636,6 +642,54 @@ class Radar:
         return thresholds
 
 
+    def _cfar_1d(self, signal, train_cells, guard_cells, threshold_factor):
+        """
+        1D-CFAR (Constant False Alarm Rate) für Winkelspektrum
+        
+        Parameters:
+        -----------
+        signal : np.ndarray
+            1D-Eingangssignal (z.B. Power-Spektrum in dB)
+        train_cells : int
+            Anzahl der Trainingszellen auf jeder Seite
+        guard_cells : int
+            Anzahl der Guard-Zellen auf jeder Seite
+        threshold_factor : float
+            Multiplikator für den Schwellenwert
+            
+        Returns:
+        --------
+        threshold : np.ndarray
+            CFAR-Schwellenwert für jede Position im Signal
+        """
+        N = len(signal)
+        threshold = np.zeros(N)
+        
+        for i in range(N):
+            # Definiere linke und rechte Trainingsregion
+            left_start = max(0, i - guard_cells - train_cells)
+            left_end = max(0, i - guard_cells)
+            
+            right_start = min(N, i + guard_cells + 1)
+            right_end = min(N, i + guard_cells + train_cells + 1)
+            
+            # Sammle Trainingszellen
+            train_samples = []
+            if left_end > left_start:
+                train_samples.extend(signal[left_start:left_end])
+            if right_end > right_start:
+                train_samples.extend(signal[right_start:right_end])
+            
+            # Berechne Schwellenwert
+            if len(train_samples) > 0:
+                noise_level = np.mean(train_samples)
+                threshold[i] = noise_level + threshold_factor
+            else:
+                threshold[i] = np.min(signal)  # Fallback
+        
+        return threshold
+
+
     def plot_cfar_threshold_map(self, title=None, cmap='viridis', figsize=(10,7)):
         """
         Zeigt die in self.cfar_thresholds gespeicherten CFAR-Schwellen als 2D-Plot.
@@ -1167,10 +1221,35 @@ class Radar:
             # Power-Spektrum in dB
             power_db = 10 * np.log10(angle_spectrum**2 + 1e-10)
 
-            # Finde Peak (maximale Leistung)
-            max_index = np.argmax(power_db)
-            estimated_angle = theta_deg[max_index]
-            max_power = power_db[max_index]
+            # Finde Peak basierend auf gewählter Methode
+            if self.angle_detection_method == 'cfar':
+                # 1D-CFAR für Winkelschätzung
+                cfar_threshold = self._cfar_1d(power_db, 
+                                              self.cfar_1d_train_cells, 
+                                              self.cfar_1d_guard_cells, 
+                                              self.cfar_1d_threshold_factor)
+                
+                # Detektionen über Threshold
+                detections_mask = power_db > cfar_threshold
+                
+                if np.any(detections_mask):
+                    # Finde alle Peaks über Threshold
+                    detection_indices = np.where(detections_mask)[0]
+                    # Wähle stärksten Peak
+                    max_index = detection_indices[np.argmax(power_db[detection_indices])]
+                else:
+                    # Fallback auf Maximum, wenn CFAR nichts findet
+                    max_index = np.argmax(power_db)
+                    cfar_threshold = None
+                
+                estimated_angle = theta_deg[max_index]
+                max_power = power_db[max_index]
+            else:
+                # Einfacher Max-Finder
+                max_index = np.argmax(power_db)
+                estimated_angle = theta_deg[max_index]
+                max_power = power_db[max_index]
+                cfar_threshold = None
 
             # Berechne physikalische Werte
             range_m = range_axis[r_bin]
@@ -1194,13 +1273,23 @@ class Radar:
             plt.figure(figsize=(10, 6))
             plt.plot(theta_deg, power_db, 'b-', linewidth=1.5, label="Azimut-Spektrum")
             
+            # Plotte CFAR-Threshold falls vorhanden
+            if self.angle_detection_method == 'cfar' and cfar_threshold is not None:
+                plt.plot(theta_deg, cfar_threshold, 'g--', linewidth=1.5, alpha=0.7, 
+                        label="CFAR-Threshold")
+                # Markiere alle Detektionen über Threshold
+                if np.any(detections_mask):
+                    plt.scatter(theta_deg[detections_mask], power_db[detections_mask], 
+                              c='orange', s=50, alpha=0.6, label="CFAR-Detektionen")
+            
             # Markiere Peak
             plt.plot(estimated_angle, max_power, 'ro', markersize=10,
                     label=f"Peak bei {estimated_angle:.2f}°")
             plt.axvline(estimated_angle, color='r', linestyle='--', linewidth=1.5, alpha=0.7)
 
             # Titel und Beschriftungen
-            title = f"Azimut-Spektrum - Detektion #{det_num+1}\n"
+            method_name = "CFAR" if self.angle_detection_method == 'cfar' else "Max-Finder"
+            title = f"Azimut-Spektrum - Detektion #{det_num+1} (Methode: {method_name})\n"
             title += f"Range: {range_m:.2f}m (Bin {r_bin}), "
             title += f"Velocity: {velocity_m_s:.3f}m/s ({velocity_m_s*3.6:.2f} km/h) (Bin {d_bin})\n"
             title += f"Geschätzter Winkel: {estimated_angle:.2f}°, Leistung: {max_power:.1f} dB"
