@@ -6,8 +6,8 @@ from radar import Radar
 
 def USRR_Dynamic_Config():
     # Paths to radar cube data
-    radar_file_3D = "RadarCube/USRR_Dynamic10m/3D/RadarCube"
-    radar_file_4D = "RadarCube/USRR_Dynamic10m/4D/ADCCube"
+    radar_file_3D = "C:/Users/fabia/Documents/HS Kempten/Sem11/Sensorik (Herr Poguntke)/PSA/Radar_Daten/Radar_Cube/USRR_Dynamic10m/3D/RadarCube"
+    radar_file_4D = "C:/Users/fabia/Documents/HS Kempten/Sem11/Sensorik (Herr Poguntke)/PSA/Radar_Daten/Radar_Cube/USRR_Dynamic10m/4D/ADCCube"
 
     threshold_factor = 300  # Reduziert von 300 auf 10 für bessere Sensitivität
     factor_formular_max_velocity = 2
@@ -30,8 +30,8 @@ def USRR_Dynamic_Config():
 
 def MRR_CornField_Config():
     # Paths to radar cube data
-    radar_file_3D = "RadarCube/MRR_CornField/3D/RadarCube"
-    radar_file_4D = "RadarCube/MRR_CornField/4D/ADCCube"
+    radar_file_3D = "C:/Users/fabia/Documents/HS Kempten/Sem11/Sensorik (Herr Poguntke)/PSA/Radar_Daten/Radar_Cube/MRR_CornField/3D/RadarCube"
+    radar_file_4D = "C:/Users/fabia/Documents/HS Kempten/Sem11/Sensorik (Herr Poguntke)/PSA/Radar_Daten/Radar_Cube/MRR_CornField/4D/ADCCube"
 
     threshold_factor = 15  # 15 für bessere Sensitivität
     factor_formular_max_velocity = 10

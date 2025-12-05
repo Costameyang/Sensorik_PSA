@@ -65,15 +65,23 @@ class Radar:
         self.Doppler_window_type = 'hanning' # 'hanning'
         self.window_name = [self.Range_window_type, self.Doppler_window_type]   #['blackman', 'hanning']  , ['blackman', 'blackman']
 
-        # CFAR-Kernel Paraeter
+        # CFAR-Kernel Parameter
+        self.CFAR_method = 'os'    # Auswahl CFAR-MEthode: OS-CFAR Methode: 'os' oder CA-CFAR Methode: 'ca'
+
         self.kernel_matrix = None       # Angabe einer 2D-Matrix als Kernel möglich (0=außerhalb, 1=train, 2=guard, 3=CUT)
         self.train_range = 10 # 15
         self.train_doppler = 10 # 15
         self.guard_range = 8 # 10
         self.guard_doppler = 8 #  10
         self.threshold_factor = threshold_factor     # Parameter zur Schwellwertberechnung
-
         self.window_cifar_max_size = 5  # Fenstergröße für Non-Maximum Suppression bei CFAR (ungerade Zahl)
+
+        self.os_rank=0.3            # Rang für OS-CFAR -> bestimmt welcher Wert aus den sortierten Trainingszellen genommen wird (r=0.5 --> Median)
+        self.os_multiplier=3000     # Multiplikator für OS-CFAR Schwellenwert  => Schwellwert = k-ter-Wert * os_multiplier
+        self.os_N_range = 40        # Anzahl der Trainingszellen in Range-Richtung für OS-CFAR
+        self.os_N_doppler = 20      # Anzahl der Trainingszellen in Doppler-Richtung für OS-CFAR
+
+
 
         # Winkelschätzung Methode: 'cfar' oder 'max'
         self.angle_detection_method = 'max'  # Wähle zwischen 'cfar' und 'max'
@@ -82,7 +90,7 @@ class Radar:
         self.cfar_1d_threshold_factor = 3.0  # Threshold-Faktor für 1D-CFAR
 
         # Load Antenna Array
-        antenna_array_path = Path("RadarCube/AntennaArray.npy")
+        antenna_array_path = Path("C:/Users/fabia/Documents/HS Kempten/Sem11/Sensorik (Herr Poguntke)/PSA/Radar_Daten/Radar_Cube/AntennaArray.npy")
         antenna_array_raw = np.load(antenna_array_path).astype(np.float64)
         self.AntennaPositions = antenna_array_raw
 
@@ -189,7 +197,9 @@ class Radar:
         self.plot_cfar_kernel(self.CFAR_kernel)
 
         # Task 3.3 CA-CFAR-Kernel auf Range-Doppler-Map anwenden und Schwellenwerte berechnen
-        self.thresholds = self.compute_cfar_thresholds(data=None, kernel=self.CFAR_kernel, threshold_factor=self.threshold_factor, pad_fill=0)
+        # self.thresholds = self.compute_cfar_thresholds(data=None, kernel=self.CFAR_kernel, threshold_factor=self.threshold_factor, pad_fill=0)
+ 
+        self.thresholds = self.compute_cfar_thresholds(data=None, kernel=self.CFAR_kernel, threshold_factor=self.threshold_factor, pad_fill=0, method=self.CFAR_method, os_rank=self.os_rank, os_multiplier=self.os_multiplier, os_N_range=self.os_N_range, os_N_doppler=self.os_N_doppler)
 
         # Task 3.4 CFAR-3D-Plot mit Overlay der Schwellenwerte aufrufen
         self.plot_CFAR_results_3d(name="Task 3: All Channels Summed 3D with CFAR", decimate=(1,1), elev=30, azim=-60)
@@ -293,26 +303,183 @@ class Radar:
             self.window_doppler = np.ones(self.num_chirps)
             # continue  # don't skip entire file; proceed with rectangular window
         
-        # 2. 2D-Fenster erstellen
+         # 2. 2D-Fensterfunktion anzeigen (neue Darstellung: Anzeige der einzelnen 1D-Fenstern mit Spektren und finales 2D-Fenster)
         self.window_2d = np.outer(self.window_range, self.window_doppler)
 
         if plot_window:
             if self.output_print:
-                # im 3d plot die window funktion anzeigen
-                self._log(f"\t- Plot 2D Window Function (Range: {self.Range_window_type} x Doppler: {self.Doppler_window_type})")
-            try:
-                # Achsen: Doppler (Spalten) und Range (Zeilen)
-                doppler_axis = np.arange(self.num_chirps)
-                range_axis = np.arange(self.num_samples)
-                D, R = np.meshgrid(doppler_axis, range_axis)
+                self._log(f"\t- Plot 2D Window Function (Range: {self.Range_window_type} x Doppler: {self.Doppler_window_type}) - extended view")
 
-                title = f'2D Window Function (Range: {self.Range_window_type} x Doppler: {self.Doppler_window_type})'
-                # Verwende generische 3D-Funktion
-                self._generic_plot_3d(D, R, self.window_2d,
-                                      xlabel=f"Doppler Bin ('{self.Doppler_window_type}')", ylabel=f"Range Bin ('{self.Range_window_type}')", zlabel='Window Amplitude',
-                                      title=title, cmap='viridis', vmin=None, vmax=None, elev=25, azim=-60)
+            try:
+                # Keine Verwendung der Key-Parameter: zeige Bins auf den oberen Plots
+                range_bins = np.arange(self.num_samples)
+                doppler_bins = np.arange(self.num_chirps)
+
+                # 3D-Gitter ebenfalls in Bins (keine physikalische Skalierung)
+                V_mesh, R_mesh = np.meshgrid(doppler_bins, range_bins)
+
+                # 1D-Spektren der Einzelfenster berechnen (zero-pad für bessere Auflösung)
+                # x-Achse: symmetrische, zentrierte physikalische Frequenzachse in Hz, später in kHz angezeigt
+                def compute_spectrum_and_centered_bins(x, n_fft=None):
+                    n = len(x)
+                    n_fft = n_fft or max(2048, n * 8)
+                    X = np.fft.fft(x, n=n_fft)
+                    Xs = np.fft.fftshift(X)
+                    mag_db = 20.0 * np.log10(np.abs(Xs) + 1e-12)
+                    mag_db = mag_db - np.max(mag_db)
+                    center = n_fft // 2
+                    # physikalische Frequenzachse in Hz: (k - N/2) / N * f_sampling
+                    freq_hz = (np.arange(n_fft) - center) / float(n_fft) * float(self.f_sampling) / float(2)
+                    # für Anzeige in kHz
+                    freq_khz = freq_hz / 1e3
+                    return freq_khz, mag_db, n_fft
+
+                bins_r, spec_r_db, nfft_r = compute_spectrum_and_centered_bins(self.window_range)
+                bins_d, spec_d_db, nfft_d = compute_spectrum_and_centered_bins(self.window_doppler)
+
+                # Erzeuge Figure mit GridSpec: 2 Zeilen x 4 Spalten,
+                import matplotlib.gridspec as gridspec
+                from matplotlib import cm
+                from matplotlib.colors import Normalize
+
+                fig = plt.figure(figsize=(16, 8))
+                gs = gridspec.GridSpec(2, 4, width_ratios=[1, 1, 1.6, 1.6], wspace=0.35, hspace=0.35)
+
+                # Top-Left: Range window (1D) -> Zeige Bins
+                ax_r_win = fig.add_subplot(gs[0, 0])
+                ax_r_win.plot(range_bins, self.window_range, color='tab:blue', lw=1.5)
+                ax_r_win.set_title(f"Fensterfunktion - Range-Dimension \n('{self.Range_window_type}')")
+                ax_r_win.set_xlabel("Range Bin")
+                ax_r_win.set_ylabel("Amplitude")
+                ax_r_win.grid(alpha=0.3)
+
+                # Top-Second: Doppler window (1D) -> Zeige Bins
+                ax_d_win = fig.add_subplot(gs[0, 1])
+                ax_d_win.plot(doppler_bins, self.window_doppler, color='tab:orange', lw=1.5)
+                ax_d_win.set_title(f"Fensterfunktion - Doppler-Dimension \n('{self.Doppler_window_type}')")
+                ax_d_win.set_xlabel("Doppler Bin")
+                ax_d_win.set_ylabel("Amplitude")
+                ax_d_win.grid(alpha=0.3)
+
+                # Bottom-Left: Spectrum of Range window — centered FFT (physikalische Frequenz in kHz)
+                ax_r_spec = fig.add_subplot(gs[1, 0])
+                ax_r_spec.plot(bins_r, spec_r_db, color='tab:blue', lw=1.2)
+                ax_r_spec.set_title("Spektrum - Range-Dimension")
+                ax_r_spec.set_xlabel("Frequency (kHz)")
+                ax_r_spec.set_ylabel("Magnitude (dB, normalized)")
+                # Y-Limit -80..0 dB; X-Limit berechnen in kHz (optional begrenzen)
+                xlim_min_r_bins, xlim_max_r_bins = 0, 20
+                x_min_possible = float(bins_r.min())
+                x_max_possible = float(bins_r.max())
+                xlim_min_r_khz = xlim_min_r_bins / float(nfft_r) * (float(self.f_sampling) / 1e3)
+                xlim_max_r_khz = xlim_max_r_bins / float(nfft_r) * (float(self.f_sampling) / 1e3)
+                ax_r_spec.set_xlim(max(xlim_min_r_khz, x_min_possible), min(xlim_max_r_khz, x_max_possible))
+                ax_r_spec.set_ylim(-80, 0)
+                ax_r_spec.grid(alpha=0.3)
+                # Zeige unten links die tatsächlichen Frequenzgrenzen in kHz
+                ax_r_spec.text(0.01, 0.01, f"{bins_r.min():.1f} – {bins_r.max():.1f} kHz", transform=ax_r_spec.transAxes,
+                               fontsize=9, va='bottom', ha='left', color='0.15')
+
+                # Bottom-Second: Spectrum of Doppler window — centered FFT (physikalische Frequenz in kHz)
+                ax_d_spec = fig.add_subplot(gs[1, 1])
+                ax_d_spec.plot(bins_d, spec_d_db, color='tab:orange', lw=1.2)
+                ax_d_spec.set_title("Spektrum - Doppler-Dimension")
+                ax_d_spec.set_xlabel("Frequency (kHz)")
+                ax_d_spec.set_ylabel("Magnitude (dB, normalized)")
+                xlim_min_d_bins, xlim_max_d_bins = 0, 50
+                x_min_possible_d = float(bins_d.min())
+                x_max_possible_d = float(bins_d.max())
+                xlim_min_d_khz = xlim_min_d_bins / float(nfft_d) * (float(self.f_sampling) / 1e3)
+                xlim_max_d_khz = xlim_max_d_bins / float(nfft_d) * (float(self.f_sampling) / 1e3)
+                ax_d_spec.set_xlim(max(xlim_min_d_khz, x_min_possible_d), min(xlim_max_d_khz, x_max_possible_d))
+                ax_d_spec.set_ylim(-80, 0)
+                ax_d_spec.grid(alpha=0.3)
+                # Zeige unten links die tatsächlichen Frequenzgrenzen in kHz
+                ax_d_spec.text(0.01, 0.01, f"{bins_d.min():.1f} – {bins_d.max():.1f} kHz", transform=ax_d_spec.transAxes,
+                               fontsize=9, va='bottom', ha='left', color='0.15')
+
+                # Rechte große Fläche: 3D-Plot der 2D-Fensterfunktion (Bins auf Achsen)
+                ax3d = fig.add_subplot(gs[:, 2:], projection='3d')
+                z_min = np.nanmin(self.window_2d)
+                z_max = np.nanmax(self.window_2d)
+                norm = Normalize(vmin=z_min, vmax=z_max)
+                mappable = cm.ScalarMappable(norm=norm, cmap='viridis')
+                mappable.set_array(self.window_2d)
+                facecolors = mappable.to_rgba(self.window_2d)
+
+                try:
+                    surf = ax3d.plot_surface(V_mesh, R_mesh, self.window_2d, facecolors=facecolors, linewidth=0, antialiased=True, shade=False)
+                    cbar = fig.colorbar(mappable, ax=ax3d, shrink=0.6, pad=0.02)
+                    cbar.set_label('Window Amplitude')
+                except Exception as e:
+                    ax3d.plot_wireframe(V_mesh, R_mesh, self.window_2d, rstride=max(1, self.num_samples//50), cstride=max(1, self.num_chirps//50))
+                    print(f"Warnung: 3D surface failed, used wireframe: {e}")
+
+                ax3d.set_title(f'2D Window Function (3D) - Range Bins x Doppler Bins')
+                ax3d.set_xlabel("Doppler Bin")
+                ax3d.set_ylabel("Range Bin")
+                ax3d.set_zlabel('Window Amplitude')
+                ax3d.view_init(elev=25, azim=-60)
+
+                plt.tight_layout()
+                plt.show()
+
             except Exception as e:
-                print(f"Warnung: 3D-Plot der Fensterfunktion fehlgeschlagen: {e}")
+                print(f"Warnung: Erweitertes Fenster-Diagramm fehlgeschlagen: {e}")
+
+            # Bestimme Breite der Hauptkeulen beider Fensterfunktionen (Halfwidth: 0 -> erstes Minimum)
+            def _mainlobe_halfwidth_from_center(spec_db):
+                """
+                Rückgabe:
+                  (half_distance_bins, first_min_index)
+                Annahme: spec_db ist fftshifted und in dB (Peak-normalisiert).
+                Methode: Suche erstes lokales Minimum rechts vom Zentrum;
+                         halfwidth = Abstand(center -> first_min).
+                """
+                spec = np.asarray(spec_db)
+                if spec.size == 0 or np.all(np.isnan(spec)):
+                    return 0, -1
+
+                n = spec.size
+                center = n // 2
+
+                # Suche erstes lokales Minimum rechts vom Zentrum (center+1 .. n-2)
+                first_min = None
+                for i in range(center + 1, n - 1):
+                    if spec[i] <= spec[i - 1] and spec[i] <= spec[i + 1]:
+                        first_min = i
+                        break
+
+                # Fallback: falls kein lokales Minimum gefunden wurde, nimm globales Minimum auf rechter Hälfte
+                if first_min is None:
+                    if center + 1 < n:
+                        rel = int(np.nanargmin(spec[center + 1:]))
+                        first_min = center + 1 + rel
+                    else:
+                        first_min = center
+
+                half_distance = first_min - center
+                return int(half_distance), int(first_min)
+
+            # Anwendung: spec_r_db und spec_d_db müssen im aktuellen Scope vorhanden sein (dB, fftshifted, peak-normalisiert)
+            range_half, range_firstmin = _mainlobe_halfwidth_from_center(spec_r_db)
+            dop_half, dop_firstmin = _mainlobe_halfwidth_from_center(spec_d_db)
+
+            # Speichere die Werte in der Instanz für spätere Verwendung
+            self.mainlobe_halfwidth_range_bins = range_half
+            self.mainlobe_firstmin_range_bin = range_firstmin
+            # Physikalische Halfwidth in Hz und kHz
+            self.mainlobe_halfwidth_range_hz = float(range_half) * (float(self.f_sampling) / float(nfft_r)) if nfft_r > 0 else 0.0
+            self.mainlobe_halfwidth_range_khz = self.mainlobe_halfwidth_range_hz / 1e3
+
+            self.mainlobe_halfwidth_doppler_bins = dop_half
+            self.mainlobe_firstmin_doppler_bin = dop_firstmin
+            self.mainlobe_halfwidth_doppler_hz = float(dop_half) * (float(self.f_sampling) / float(nfft_d)) if nfft_d > 0 else 0.0
+            self.mainlobe_halfwidth_doppler_khz = self.mainlobe_halfwidth_doppler_hz / 1e3
+
+            # Log-Eintrag (klarstellen, dass Halfwidth von 0 zum ersten Minimum gemeint ist)
+            self._log(f"\t- Mainlobe (0 -> first min) Range: half={range_half} bins ({self.mainlobe_halfwidth_range_khz:.3f} kHz)")
+            self._log(f"\t- Mainlobe (0 -> first min) Doppler: half={dop_half} bins ({self.mainlobe_halfwidth_doppler_khz:.3f} kHz)")
 
         # 3. Fenster anwenden
         self.windowed_data = channel * self.window_2d
@@ -567,32 +734,102 @@ class Radar:
         plt.show()
 
 
-    def compute_cfar_thresholds(self, data=None, kernel=None, threshold_factor=1.5, pad_fill=0):
+    # def compute_cfar_thresholds(self, data=None, kernel=None, threshold_factor=1.5, pad_fill=0):
+    #     """
+    #     Berechne CA-CFAR-Schwellenwerte über die 2D-Range-Doppler-Map.
+    #     Vorgehen:
+    #      - Für jedes CUT wird die Summe der Quadrate (Leistung) der Trainingszellen berechnet.
+    #      - Mittelung durch die Anzahl tatsächlich überlappender Trainingszellen ergibt die mittlere Leistung.
+    #      - Die mittlere Leistung wird mit `threshold_factor` multipliziert -> Schwellenwert.
+    #     Rückgabe:
+    #      - thresholds: 2D-Array gleicher Form wie `data` mit den Schwellenwerten (np.nan, wenn keine Trainingszellen überlappen)
+    #     Parameter:
+    #      - data: 2D-Array (Complex/Real). Default: abs(self.fft_shifted) (lineare Amplitude)
+    #      - kernel: 2D-Kernel wie von `create_cfar_kernel` erzeugt (0=outside,1=train,2=guard,3=CUT).
+    #                Default: self.CFAR_kernel (falls vorhanden), sonst erzeugt aus self.train_*/self.guard_*.
+    #      - threshold_factor: Skalar zum Multiplizieren der mittleren Leistung (z.B. 1.5, 2.0 ...)
+    #      - pad_fill: Wert zum Füllen außerhalb (wird bei der Korrelation benutzt); Standard 0.
+    #     Speichert zusätzlich in der Instanz:
+    #      - self.cfar_thresholds
+    #      - self.cfar_train_counts
+    #      - self.cfar_threshold_factor
+    #     """
+
+    #     if self.output_print:
+    #         self._log(f"\n - Task 3.3: \n\t- Berechne CA-CFAR Schwellenwerte (threshold_factor={self.threshold_factor})")
+
+
+    #     # Validierung / Default-Handling
+    #     if data is None:
+    #         if hasattr(self, "fft_shifted"):
+    #             data = np.abs(self.fft_shifted)
+    #         else:
+    #             raise ValueError("Kein `data` übergeben und `self.fft_shifted` nicht vorhanden.")
+    #     else:
+    #         data = np.asarray(data)
+
+    #     kernel = self.CFAR_kernel       # definierter CFAR-Kernel 
+          
+    #     kernel = np.asarray(kernel, dtype=np.int8)
+    #     if kernel.ndim != 2:
+    #         raise ValueError("kernel muss 2D sein.")
+
+    #     # Trainingsmask extrahieren (1 = Training)
+    #     train_mask = (kernel == 1).astype(np.int8)
+    #     n_train_total = int(np.sum(train_mask))
+
+    #     # Verwende 2D-Korrelation (keine Kernel-Flip) für effiziente Berechnung
+    #     from scipy.signal import correlate2d
+
+    #     # Leistung je Zelle (linear): |x|^2
+    #     power_map = np.abs(data) ** 2
+
+    #     # Anzahl tatsächlich überlappender Trainingszellen an jeder Position
+    #     ones_map = np.ones_like(power_map, dtype=np.int32)
+    #     train_counts = correlate2d(ones_map, train_mask, mode='same', boundary='fill', fillvalue=0)
+
+    #     # Summe der Leistungen über Trainingszellen an jeder Position
+    #     train_power_sum = correlate2d(power_map, train_mask, mode='same', boundary='fill', fillvalue=pad_fill)
+
+    #     # Vermeide Division durch 0: nur dort berechnen, wo train_counts > 0
+    #     thresholds = np.full_like(train_power_sum, np.nan, dtype=float)
+    #     valid = train_counts > 0
+    #     thresholds[valid] = (train_power_sum[valid] / train_counts[valid]) * float(threshold_factor)
+
+    #     # Speichere Ergebnisse in der Instanz
+    #     self.cfar_thresholds = thresholds
+    #     self.cfar_train_counts = train_counts
+    #     self.cfar_threshold_factor = threshold_factor
+
+    #     if self.output_print:
+    #         self._log(f"\t- CA-CFAR Schwellenwerte berechnet (threshold_factor={threshold_factor}).")
+    #         self._log(f"\t  - Kernel-Trainingszellen (global): {n_train_total}")
+    #         self._log(f"\t  - Shape thresholds: {thresholds.shape}")
+
+    #     return thresholds
+
+    def compute_cfar_thresholds(self, data=None, kernel=None, threshold_factor=1.5, pad_fill=0,
+                                method='ca', os_rank=0.75, os_multiplier=1.0,
+                                os_N_range=None, os_N_doppler=None):
         """
-        Berechne CA-CFAR-Schwellenwerte über die 2D-Range-Doppler-Map.
-        Vorgehen:
-         - Für jedes CUT wird die Summe der Quadrate (Leistung) der Trainingszellen berechnet.
-         - Mittelung durch die Anzahl tatsächlich überlappender Trainingszellen ergibt die mittlere Leistung.
-         - Die mittlere Leistung wird mit `threshold_factor` multipliziert -> Schwellenwert.
-        Rückgabe:
-         - thresholds: 2D-Array gleicher Form wie `data` mit den Schwellenwerten (np.nan, wenn keine Trainingszellen überlappen)
-        Parameter:
-         - data: 2D-Array (Complex/Real). Default: abs(self.fft_shifted) (lineare Amplitude)
-         - kernel: 2D-Kernel wie von `create_cfar_kernel` erzeugt (0=outside,1=train,2=guard,3=CUT).
-                   Default: self.CFAR_kernel (falls vorhanden), sonst erzeugt aus self.train_*/self.guard_*.
-         - threshold_factor: Skalar zum Multiplizieren der mittleren Leistung (z.B. 1.5, 2.0 ...)
-         - pad_fill: Wert zum Füllen außerhalb (wird bei der Korrelation benutzt); Standard 0.
-        Speichert zusätzlich in der Instanz:
-         - self.cfar_thresholds
-         - self.cfar_train_counts
-         - self.cfar_threshold_factor
+        Berechne CFAR-Schwellenwerte (CA-CFAR oder OS-CFAR) über die 2D-Range-Doppler-Map.
+        - data: 2D-Array (Complex/Real). Default: abs(self.fft_shifted)
+        - kernel: 2D-Kernel wie von `create_cfar_kernel` erzeugt (0=outside,1=train,2=guard,3=CUT).
+                  Default: self.CFAR_kernel (falls vorhanden).
+        - threshold_factor: Multiplikator für CA-CFAR (wie bisher).
+        - pad_fill: Wert zum Füllen außerhalb (bei der Korrelation).
+        - method: 'ca' (default) oder 'os' für Ordered-Statistic CFAR.
+        - os_rank: Rang r für OS-CFAR (0..1). k = max(1, floor(r * N_train)).
+        - os_multiplier: Multiplikator für den gewählten OS-Wert.
+        - os_N_range, os_N_doppler: Anzahl der betrachteten Zellen (N) in Range / Doppler (ganze Anzahl).
+                                   Falls None, werden Default-Werte aus Instanz verwendet.
+        Speichert: self.cfar_thresholds, self.cfar_train_counts, self.cfar_threshold_factor, self.cfar_method
         """
 
         if self.output_print:
-            self._log(f"\n - Task 3.3: \n\t- Berechne CA-CFAR Schwellenwerte (threshold_factor={self.threshold_factor})")
+            self._log(f"\n - Task 3.3: \n\t- Berechne CFAR Schwellenwerte (method={method}, threshold_factor={threshold_factor}, os_rank={os_rank}, os_multiplier={os_multiplier}, os_N_range={os_N_range}, os_N_doppler={os_N_doppler})")
 
-
-        # Validierung / Default-Handling
+        # Validierung / Default-Handling für data
         if data is None:
             if hasattr(self, "fft_shifted"):
                 data = np.abs(self.fft_shifted)
@@ -601,8 +838,15 @@ class Radar:
         else:
             data = np.asarray(data)
 
-        kernel = self.CFAR_kernel       # definierter CFAR-Kernel 
-          
+        # Kernel default / Validierung
+        if kernel is None:
+            kernel = getattr(self, "CFAR_kernel", None)
+            if kernel is None:
+                # Erzeuge Standardkernel aus den Instanzparametern
+                kernel = self.create_cfar_kernel(train_range=self.train_range,
+                                                 train_doppler=self.train_doppler,
+                                                 guard_range=self.guard_range,
+                                                 guard_doppler=self.guard_doppler)
         kernel = np.asarray(kernel, dtype=np.int8)
         if kernel.ndim != 2:
             raise ValueError("kernel muss 2D sein.")
@@ -611,35 +855,173 @@ class Radar:
         train_mask = (kernel == 1).astype(np.int8)
         n_train_total = int(np.sum(train_mask))
 
-        # Verwende 2D-Korrelation (keine Kernel-Flip) für effiziente Berechnung
-        from scipy.signal import correlate2d
-
         # Leistung je Zelle (linear): |x|^2
         power_map = np.abs(data) ** 2
 
-        # Anzahl tatsächlich überlappender Trainingszellen an jeder Position
+        # Gemeinsame Vorberechnung: Anzahl überlappender Trainingszellen (für CA & OS nützlich)
+        from scipy.signal import correlate2d
         ones_map = np.ones_like(power_map, dtype=np.int32)
         train_counts = correlate2d(ones_map, train_mask, mode='same', boundary='fill', fillvalue=0)
 
-        # Summe der Leistungen über Trainingszellen an jeder Position
-        train_power_sum = correlate2d(power_map, train_mask, mode='same', boundary='fill', fillvalue=pad_fill)
+        # ------------------------
+        # CA-CFAR (existierender Code unverändert)
+        # ------------------------
+        if method.lower() == 'ca':
+            # Summe der Leistungen über Trainingszellen an jeder Position
+            train_power_sum = correlate2d(power_map, train_mask, mode='same', boundary='fill', fillvalue=pad_fill)
 
-        # Vermeide Division durch 0: nur dort berechnen, wo train_counts > 0
-        thresholds = np.full_like(train_power_sum, np.nan, dtype=float)
-        valid = train_counts > 0
-        thresholds[valid] = (train_power_sum[valid] / train_counts[valid]) * float(threshold_factor)
+            # Vermeide Division durch 0: nur dort berechnen, wo train_counts > 0
+            thresholds = np.full_like(train_power_sum, np.nan, dtype=float)
+            valid = train_counts > 0
+            thresholds[valid] = (train_power_sum[valid] / train_counts[valid]) * float(threshold_factor)
 
-        # Speichere Ergebnisse in der Instanz
-        self.cfar_thresholds = thresholds
-        self.cfar_train_counts = train_counts
-        self.cfar_threshold_factor = threshold_factor
+            # Speichere Ergebnisse in der Instanz (wie bisher)
+            self.cfar_thresholds = thresholds
+            self.cfar_train_counts = train_counts
+            self.cfar_threshold_factor = threshold_factor
+            self.cfar_method = 'CA'
 
-        if self.output_print:
-            self._log(f"\t- CA-CFAR Schwellenwerte berechnet (threshold_factor={threshold_factor}).")
-            self._log(f"\t  - Kernel-Trainingszellen (global): {n_train_total}")
-            self._log(f"\t  - Shape thresholds: {thresholds.shape}")
+            if self.output_print:
+                self._log(f"\t- CA-CFAR Schwellenwerte berechnet (threshold_factor={threshold_factor}).")
+                self._log(f"\t  - Kernel-Trainingszellen (global): {n_train_total}")
+                self._log(f"\t  - Shape thresholds: {thresholds.shape}")
 
-        return thresholds
+            return thresholds
+
+        # ------------------------
+        # OS-CFAR (erweiterte Variante mit os_N_range / os_N_doppler)
+        # ------------------------
+        elif method.lower() == 'os':
+            rows, cols = power_map.shape
+
+            # Fallback defaults falls None übergeben
+            if os_N_range is None:
+                os_N_range = getattr(self, 'os_N_range', max(1, 2 * self.train_range))
+            if os_N_doppler is None:
+                os_N_doppler = getattr(self, 'os_N_doppler', max(1, 2 * self.train_doppler))
+
+            # Berechne Halbwinkel für Fenster
+            r_half = int(os_N_range) // 2
+            c_half = int(os_N_doppler) // 2
+
+            thresholds = np.full_like(power_map, np.nan, dtype=float)
+
+            # Positionen mit zumindest einer Trainingszelle
+            valid_positions = np.argwhere(train_counts > 0)
+
+            for (r_idx, c_idx) in valid_positions:
+                # N-Fenster um CUT (exclusive upper bound r1,c1)
+                r0 = r_idx - r_half
+                r1 = r_idx + (int(os_N_range) - r_half)
+                c0 = c_idx - c_half
+                c1 = c_idx + (int(os_N_doppler) - c_half)
+
+                # Clip an Bildränder
+                rr0 = max(r0, 0)
+                rr1 = min(r1, rows)
+                cc0 = max(c0, 0)
+                cc1 = min(c1, cols)
+
+                # Wenn Fenster leer -> skip
+                if rr1 <= rr0 or cc1 <= cc0:
+                    thresholds[r_idx, c_idx] = np.nan
+                    continue
+
+                patch_power = power_map[rr0:rr1, cc0:cc1]
+                ph, pw = patch_power.shape
+
+                # Erzeuge Trainingsmaske für dieses N-Fenster: True = candidate Training cell
+                train_mask_N = np.ones((ph, pw), dtype=bool)
+
+                # Bestimme Position des CUT innerhalb des Patch
+                center_r = r_idx - rr0
+                center_c = c_idx - cc0
+
+                # Entferne Guard-Zellen (auf beiden Seiten) und CUT selbst
+                g_r = int(self.guard_range)
+                g_c = int(self.guard_doppler)
+
+                gr0 = max(center_r - g_r, 0)
+                gr1 = min(center_r + g_r + 1, ph)
+                gc0 = max(center_c - g_c, 0)
+                gc1 = min(center_c + g_c + 1, pw)
+
+                train_mask_N[gr0:gr1, gc0:gc1] = False  # guard & CUT excluded
+
+                # Optional: Falls der original kernel definiert Trainingsregionen (z.B. irregular kernel),
+                # intersectiere mit train_mask innerhalb des passenden kernel-Patch falls vorhanden.
+                # Berechne Kernel patch indices relative zum kernel center:
+                k_rows, k_cols = kernel.shape
+                k_center_r = k_rows // 2
+                k_center_c = k_cols // 2
+
+                # Kernel patch corresponding to the N-patch (if overlapping)
+                # kernel indices that map to rr0..rr1 etc:
+                k_r0 = (rr0 - (r_idx - k_center_r))
+                k_c0 = (cc0 - (c_idx - k_center_c))
+                k_r1 = k_r0 + ph
+                k_c1 = k_c0 + pw
+
+                # Clip kernel indices
+                kr0_clip = max(int(k_r0), 0)
+                kc0_clip = max(int(k_c0), 0)
+                kr1_clip = min(int(k_r1), k_rows)
+                kc1_clip = min(int(k_c1), k_cols)
+
+                if (kr1_clip > kr0_clip) and (kc1_clip > kc0_clip):
+                    # kernel_sub has same alignment as patch_power[ kernel_clip region ]
+                    kernel_sub = kernel[kr0_clip:kr1_clip, kc0_clip:kc1_clip]
+                    # Build mask aligned to kernel_sub location within train_mask_N
+                    # compute offsets in train_mask_N where kernel_sub should be placed
+                    km_r_offset = kr0_clip - k_r0
+                    km_c_offset = kc0_clip - k_c0
+                    km_h = kernel_sub.shape[0]
+                    km_w = kernel_sub.shape[1]
+
+                    # create a mask of zeros and set positions where kernel_sub == 1
+                    kernel_train_mask_local = np.zeros_like(train_mask_N, dtype=bool)
+                    kernel_train_mask_local[km_r_offset:km_r_offset+km_h, km_c_offset:km_c_offset+km_w] = (kernel_sub == 1)
+                    # Intersect: only keep training candidates where kernel indicates training cells
+                    train_mask_N = train_mask_N & kernel_train_mask_local
+                else:
+                    # If kernel_sub does not overlap, leave train_mask_N as-is (it already excludes guard/CUT)
+                    pass
+
+                # Extract training values
+                train_values = patch_power[train_mask_N]
+                if train_values.size == 0:
+                    thresholds[r_idx, c_idx] = np.nan
+                    continue
+
+                # Sortiere absteigend und wähle k aus Rang r
+                sorted_vals = np.sort(train_values)[::-1]
+                N_curr = sorted_vals.size
+                k_val = int(np.floor(float(os_rank) * float(N_curr)))
+                if k_val < 1:
+                    k_val = 1
+                if k_val > N_curr:
+                    k_val = N_curr
+                idx_k = k_val - 1
+                selected = sorted_vals[idx_k]
+                thresholds[r_idx, c_idx] = float(selected) * float(os_multiplier)
+
+            # Speichere Ergebnisse in der Instanz (gleiche Variablen wie CA)
+            self.cfar_thresholds = thresholds
+            self.cfar_train_counts = train_counts
+            self.cfar_threshold_factor = os_multiplier
+            self.cfar_method = 'OS'
+
+            if self.output_print:
+                self._log(f"\t- OS-CFAR Schwellenwerte berechnet (os_rank={os_rank}, os_multiplier={os_multiplier}, os_N_range={os_N_range}, os_N_doppler={os_N_doppler}).")
+                self._log(f"\t  - Kernel-Trainingszellen (global): {n_train_total}")
+                self._log(f"\t  - Shape thresholds: {thresholds.shape}")
+
+            return thresholds
+
+        else:
+            raise ValueError("Unbekannte Methode für compute_cfar_thresholds. Verwende 'ca' oder 'os'.")
+
+
 
 
     def _cfar_1d(self, signal, train_cells, guard_cells, threshold_factor):
