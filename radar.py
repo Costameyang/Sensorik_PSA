@@ -66,7 +66,9 @@ class Radar:
         self.window_name = [self.Range_window_type, self.Doppler_window_type]   #['blackman', 'hanning']  , ['blackman', 'blackman']
 
         # CFAR-Kernel Parameter
-        self.CFAR_method = 'os'    # Auswahl CFAR-MEthode: OS-CFAR Methode: 'os' oder CA-CFAR Methode: 'ca'
+        self.CFAR_method = 'CA'    # Auswahl CFAR-MEthode: 
+                                   # > OS-CFAR Methode: 'os' 
+                                   # > CA-CFAR Methode: 'ca'
 
         self.kernel_matrix = None       # Angabe einer 2D-Matrix als Kernel möglich (0=außerhalb, 1=train, 2=guard, 3=CUT)
         self.train_range = 10 # 15
@@ -90,7 +92,7 @@ class Radar:
         self.cfar_1d_threshold_factor = 3.0  # Threshold-Faktor für 1D-CFAR
 
         # Load Antenna Array
-        antenna_array_path = Path("C:/Users/fabia/Documents/HS Kempten/Sem11/Sensorik (Herr Poguntke)/PSA/Radar_Daten/Radar_Cube/AntennaArray.npy")
+        antenna_array_path = Path("./RadarCube/AntennaArray.npy")
         antenna_array_raw = np.load(antenna_array_path).astype(np.float64)
         self.AntennaPositions = antenna_array_raw
 
@@ -196,9 +198,7 @@ class Radar:
         # Task 3.3 Kernel als figure plotten
         self.plot_cfar_kernel(self.CFAR_kernel)
 
-        # Task 3.3 CA-CFAR-Kernel auf Range-Doppler-Map anwenden und Schwellenwerte berechnen
-        # self.thresholds = self.compute_cfar_thresholds(data=None, kernel=self.CFAR_kernel, threshold_factor=self.threshold_factor, pad_fill=0)
- 
+        # Task 3.3 CFAR-Kernel auf Range-Doppler-Map anwenden und Schwellenwerte berechnen -> Auswahl OS-CFAR oder CA-CFAR
         self.thresholds = self.compute_cfar_thresholds(data=None, kernel=self.CFAR_kernel, threshold_factor=self.threshold_factor, pad_fill=0, method=self.CFAR_method, os_rank=self.os_rank, os_multiplier=self.os_multiplier, os_N_range=self.os_N_range, os_N_doppler=self.os_N_doppler)
 
         # Task 3.4 CFAR-3D-Plot mit Overlay der Schwellenwerte aufrufen
@@ -642,86 +642,227 @@ class Radar:
 
         return kernel
 
+    # def print_output_cifar(self):
+    #     n_train = int(np.sum(self.CFAR_kernel == 1))
+    #     n_guard = int(np.sum(self.CFAR_kernel == 2))
+    #     n_cut = int(np.sum(self.CFAR_kernel == 3))
+
+    #     if self.output_print:
+    #         self._log(f"\n - Task 3.1: \n\t- Kernel erzeugt: Trainingszellen={n_train}, Guard-Zellen={n_guard}, CUT={n_cut}")
+    #         self._log(f"\n\t- Kernelgrößen in Doppler-Dimension: Anzahl Trainingszellen = {self.train_doppler}, Anzahl Guardzellen = {self.guard_doppler}")
+    #         self._log(f"\n\t- Kernelgrößen in Distanz-Dimension: Anzahl Trainingszellen = {self.train_range}, Anzahl Guardzellen = {self.guard_range}")
+
     def print_output_cifar(self):
         n_train = int(np.sum(self.CFAR_kernel == 1))
         n_guard = int(np.sum(self.CFAR_kernel == 2))
         n_cut = int(np.sum(self.CFAR_kernel == 3))
 
         if self.output_print:
+            method = getattr(self, "CFAR_method", "ca").lower()
             self._log(f"\n - Task 3.1: \n\t- Kernel erzeugt: Trainingszellen={n_train}, Guard-Zellen={n_guard}, CUT={n_cut}")
-            self._log(f"\n\t- Kernelgrößen in Doppler-Dimension: Anzahl Trainingszellen = {self.train_doppler}, Anzahl Guardzellen = {self.guard_doppler}")
-            self._log(f"\n\t- Kernelgrößen in Distanz-Dimension: Anzahl Trainingszellen = {self.train_range}, Anzahl Guardzellen = {self.guard_range}")
 
+            if method == 'os':
+                # OS-CFAR spezifische Kenngrößen
+                self._log(f"\n\t- CFAR Methode: OS-CFAR")
+                self._log(f"\t- OS-Parameter: os_rank={self.os_rank}, os_multiplier={self.os_multiplier}")
+                self._log(f"\t- OS-Fenstergrößen (N): Range={self.os_N_range}, Doppler={self.os_N_doppler}")
+                # Zusätzlich Kernel-Dimensionen/Counts zur Kontrolle
+                self._log(f"\t- Kernel (Überblick): Trainingszellen gesamt={n_train}, Guard-Zellen gesamt={n_guard}, CUT={n_cut}")
+
+            else:
+                # CA-CFAR spezifische Kenngrößen
+                self._log(f"\n\t- CFAR Methode: CA-CFAR")
+                self._log(f"\n\t- Kernelgrößen in Doppler-Dimension: Anzahl Trainingszellen = {self.train_doppler}, Anzahl Guardzellen = {self.guard_doppler}")
+                self._log(f"\n\t- Kernelgrößen in Distanz-Dimension: Anzahl Trainingszellen = {self.train_range}, Anzahl Guardzellen = {self.guard_range}")
+                self._log(f"\t- CA-Parameter: threshold_factor={self.threshold_factor}")
+                self._log(f"\t- Kernel (Überblick): Trainingszellen gesamt={n_train}, Guard-Zellen gesamt={n_guard}, CUT={n_cut}")
+
+
+    # def plot_cfar_kernel(self, kernel, figsize=(6,6), origin='lower'):
+    #     """
+    #     Visualisiere den CFAR-Kernel:
+    #       - Trainingszellen: türkis
+    #       - Guard-Zellen: grün
+    #       - CUT (Mitte): orange
+    #       - außerhalb: hellgrau
+    #     """
+
+    #     from matplotlib.colors import ListedColormap
+    #     import matplotlib.patches as mpatches
+    #     import matplotlib.patches as patches
+
+    #     title = f"\n -Task 3: CA-CFAR Kernel \n(Train (Distanz,Doppler)={self.train_range},{self.train_doppler} ; Guard (Distanz,Doppler)={self.guard_range},{self.guard_doppler})"
+        
+
+    #     kernel = np.asarray(kernel, dtype=np.int8)
+    #     rows, cols = kernel.shape
+    #     #print(f"\n - Task 3.2: \n\t- Plot CFAR Kernel with shape {kernel.shape}")
+
+    #     # Farbliste für Codes 0..3
+    #     colors = ['lightgray', '#40E0D0', 'green', 'orange']  # 0=outside,1=train,2=guard,3=CUT
+    #     cmap = ListedColormap(colors)
+
+    #     # _generic_plot_2d zeigt standardmäßig sofort via plt.show().
+    #     # Wir unterdrücken temporär plt.show(), rufen die Funktion auf, ergänzen dann Gitter/Annot.
+    #     old_show = plt.show
+    #     plt.show = lambda *a, **k: None
+    #     try:
+    #         # vmin/vmax so wählen, dass die Farbskala den integer-Codes 0..3 entspricht
+    #         self._generic_plot_2d(kernel, extent=None,
+    #                               xlabel="Doppler-Bins (relative)", ylabel="Range-Bins (relative)",
+    #                               title=title, cmap=cmap, vmin=0, vmax=3, colorbar_label='Kernel Code',
+    #                               origin=origin, figsize=figsize)
+    #     finally:
+    #         # show-Funktion wiederherstellen
+    #         plt.show = old_show
+
+    #     # Jetzt das gerade erzeugte Figure/Axes ergänzen
+    #     fig = plt.gcf()
+    #     ax = plt.gca()
+
+    #     # Gitterlinien an Zellgrenzen (Minor ticks)
+    #     ax.set_xticks(np.arange(-0.5, cols, 1), minor=True)
+    #     ax.set_yticks(np.arange(-0.5, rows, 1), minor=True)
+    #     ax.grid(which='minor', color='k', linestyle='-', linewidth=0.6, alpha=0.6)
+
+    #     # Major ticks/labels entfernen (nur Gitter sichtbar)
+    #     ax.set_xticks([])
+    #     ax.set_yticks([])
+
+    #     # CUT-Zelle dicker umranden
+    #     r_c = rows // 2
+    #     d_c = cols // 2
+    #     rect = patches.Rectangle((d_c - 0.5, r_c - 0.5), 1, 1,
+    #                              linewidth=2.0, edgecolor='orange', facecolor='none')
+    #     ax.add_patch(rect)
+
+    #     # Colorbar: falls vorhanden, beschriften (letzte Axes ist üblicherweise Colorbar-Achse)
+    #     if len(fig.axes) > 1:
+    #         cb_ax = fig.axes[-1]
+    #         try:
+    #             cb_ax.set_yticks([0,1,2,3])
+    #             cb_ax.set_yticklabels(['outside', 'train', 'guard', 'CUT'])
+    #         except Exception:
+    #             # Fallback: nichts tun, falls die Achse keine Colorbar-Achse ist
+    #             pass
+
+    #     # Legende
+    #     legend_patches = [
+    #         mpatches.Patch(color=colors[1], label='Trainingszellen (turquoise)'),
+    #         mpatches.Patch(color=colors[2], label='Guard-Zellen (grün)'),
+    #         mpatches.Patch(color=colors[3], label='CUT (orange)'),
+    #         mpatches.Patch(color=colors[0], label='Außerhalb (nicht genutzt)')
+    #     ]
+    #     ax.legend(handles=legend_patches, loc='upper right', bbox_to_anchor=(1.35, 1.0))
+
+    #     plt.tight_layout()
+    #     plt.show()
 
     def plot_cfar_kernel(self, kernel, figsize=(6,6), origin='lower'):
         """
         Visualisiere den CFAR-Kernel:
-          - Trainingszellen: türkis
-          - Guard-Zellen: grün
-          - CUT (Mitte): orange
-          - außerhalb: hellgrau
+          - Für CA-CFAR: bisherige Darstellung (Train=1, Guard=2, CUT=3).
+          - Für OS-CFAR: Erzeuge eine anschauliche Darstellung des N-Fensters
+            (os_N_range x os_N_doppler) mit markierten Guard-Zellen (je Seite)
+            und CUT in der Mitte. Darstellung nutzt dieselben Farben/Codes.
         """
-
         from matplotlib.colors import ListedColormap
         import matplotlib.patches as mpatches
         import matplotlib.patches as patches
 
-        title = f"\n -Task 3: CA-CFAR Kernel \n(Train (Distanz,Doppler)={self.train_range},{self.train_doppler} ; Guard (Distanz,Doppler)={self.guard_range},{self.guard_doppler})"
-        
+        method = getattr(self, "CFAR_method", "ca").lower()
 
-        kernel = np.asarray(kernel, dtype=np.int8)
-        rows, cols = kernel.shape
-        #print(f"\n - Task 3.2: \n\t- Plot CFAR Kernel with shape {kernel.shape}")
+        # Default: verwende übergebenen Kernel (CA-Darstellung)
+        kernel_plot = np.asarray(kernel, dtype=np.int8) if kernel is not None else None
 
-        # Farbliste für Codes 0..3
+        if method == 'os':
+            # Erzeuge visuellen OS-Kernel: os_N_range x os_N_doppler,
+            # 1 = Trainingszellen, 2 = Guard, 3 = CUT, 0 = outside
+            os_r = int(getattr(self, "os_N_range", max(1, 2 * self.train_range)))
+            os_c = int(getattr(self, "os_N_doppler", max(1, 2 * self.train_doppler)))
+
+            # Fallback falls Werte unrealistisch sind
+            if os_r < 1:
+                os_r = 1
+            if os_c < 1:
+                os_c = 1
+
+            kernel_os = np.ones((os_r, os_c), dtype=np.int8)  # train by default
+
+            # Berechne Zentrum
+            r_c = os_r // 2
+            d_c = os_c // 2
+
+            # Markiere Guard-Zellen (Anzahl pro Seite)
+            g_r = int(getattr(self, "guard_range", 0))
+            g_c = int(getattr(self, "guard_doppler", 0))
+
+            gr0 = max(r_c - g_r, 0)
+            gr1 = min(r_c + g_r + 1, os_r)
+            gc0 = max(d_c - g_c, 0)
+            gc1 = min(d_c + g_c + 1, os_c)
+
+            kernel_os[gr0:gr1, gc0:gc1] = 2  # Guard
+            kernel_os[r_c, d_c] = 3         # CUT
+            kernel_plot = kernel_os
+
+            title = (f"\n -Task 3: OS-CFAR Visualisierung \n"
+                     f"(N-Fenster = {os_r} × {os_c} ; Guard (pro Seite) = {g_r},{g_c} ; "
+                     f"os_rank={getattr(self,'os_rank',None)}, os_multiplier={getattr(self,'os_multiplier',None)})")
+        else:
+            # CA-CFAR: benutze übergebenen Kernel; Titel wie bisher
+            if kernel_plot is None:
+                # Falls kein Kernel vorhanden, erzeuge aus Instanzparametern
+                kernel_plot = self.create_cfar_kernel(train_range=self.train_range,
+                                                      train_doppler=self.train_doppler,
+                                                      guard_range=self.guard_range,
+                                                      guard_doppler=self.guard_doppler)
+            title = (f"\n -Task 3: CA-CFAR Kernel \n(Train (Distanz,Doppler)={self.train_range},{self.train_doppler} ; "
+                     f"Guard (Distanz,Doppler)={self.guard_range},{self.guard_doppler})")
+
+        # Farben für Codes 0..3
         colors = ['lightgray', '#40E0D0', 'green', 'orange']  # 0=outside,1=train,2=guard,3=CUT
         cmap = ListedColormap(colors)
 
-        # _generic_plot_2d zeigt standardmäßig sofort via plt.show().
-        # Wir unterdrücken temporär plt.show(), rufen die Funktion auf, ergänzen dann Gitter/Annot.
+        rows, cols = kernel_plot.shape
+
+        # Unterdrücke plt.show() in _generic_plot_2d, ergänze danach Gitter/Annot.
         old_show = plt.show
         plt.show = lambda *a, **k: None
         try:
             # vmin/vmax so wählen, dass die Farbskala den integer-Codes 0..3 entspricht
-            self._generic_plot_2d(kernel, extent=None,
+            self._generic_plot_2d(kernel_plot, extent=None,
                                   xlabel="Doppler-Bins (relative)", ylabel="Range-Bins (relative)",
                                   title=title, cmap=cmap, vmin=0, vmax=3, colorbar_label='Kernel Code',
                                   origin=origin, figsize=figsize)
         finally:
-            # show-Funktion wiederherstellen
             plt.show = old_show
 
-        # Jetzt das gerade erzeugte Figure/Axes ergänzen
+        # Ergänze Gitter, CUT-Rahmen, Colorbar-Ticks und Legende wie vorher
         fig = plt.gcf()
         ax = plt.gca()
 
-        # Gitterlinien an Zellgrenzen (Minor ticks)
         ax.set_xticks(np.arange(-0.5, cols, 1), minor=True)
         ax.set_yticks(np.arange(-0.5, rows, 1), minor=True)
         ax.grid(which='minor', color='k', linestyle='-', linewidth=0.6, alpha=0.6)
 
-        # Major ticks/labels entfernen (nur Gitter sichtbar)
         ax.set_xticks([])
         ax.set_yticks([])
 
-        # CUT-Zelle dicker umranden
         r_c = rows // 2
         d_c = cols // 2
         rect = patches.Rectangle((d_c - 0.5, r_c - 0.5), 1, 1,
                                  linewidth=2.0, edgecolor='orange', facecolor='none')
         ax.add_patch(rect)
 
-        # Colorbar: falls vorhanden, beschriften (letzte Axes ist üblicherweise Colorbar-Achse)
         if len(fig.axes) > 1:
             cb_ax = fig.axes[-1]
             try:
                 cb_ax.set_yticks([0,1,2,3])
                 cb_ax.set_yticklabels(['outside', 'train', 'guard', 'CUT'])
             except Exception:
-                # Fallback: nichts tun, falls die Achse keine Colorbar-Achse ist
                 pass
 
-        # Legende
         legend_patches = [
             mpatches.Patch(color=colors[1], label='Trainingszellen (turquoise)'),
             mpatches.Patch(color=colors[2], label='Guard-Zellen (grün)'),
@@ -732,81 +873,6 @@ class Radar:
 
         plt.tight_layout()
         plt.show()
-
-
-    # def compute_cfar_thresholds(self, data=None, kernel=None, threshold_factor=1.5, pad_fill=0):
-    #     """
-    #     Berechne CA-CFAR-Schwellenwerte über die 2D-Range-Doppler-Map.
-    #     Vorgehen:
-    #      - Für jedes CUT wird die Summe der Quadrate (Leistung) der Trainingszellen berechnet.
-    #      - Mittelung durch die Anzahl tatsächlich überlappender Trainingszellen ergibt die mittlere Leistung.
-    #      - Die mittlere Leistung wird mit `threshold_factor` multipliziert -> Schwellenwert.
-    #     Rückgabe:
-    #      - thresholds: 2D-Array gleicher Form wie `data` mit den Schwellenwerten (np.nan, wenn keine Trainingszellen überlappen)
-    #     Parameter:
-    #      - data: 2D-Array (Complex/Real). Default: abs(self.fft_shifted) (lineare Amplitude)
-    #      - kernel: 2D-Kernel wie von `create_cfar_kernel` erzeugt (0=outside,1=train,2=guard,3=CUT).
-    #                Default: self.CFAR_kernel (falls vorhanden), sonst erzeugt aus self.train_*/self.guard_*.
-    #      - threshold_factor: Skalar zum Multiplizieren der mittleren Leistung (z.B. 1.5, 2.0 ...)
-    #      - pad_fill: Wert zum Füllen außerhalb (wird bei der Korrelation benutzt); Standard 0.
-    #     Speichert zusätzlich in der Instanz:
-    #      - self.cfar_thresholds
-    #      - self.cfar_train_counts
-    #      - self.cfar_threshold_factor
-    #     """
-
-    #     if self.output_print:
-    #         self._log(f"\n - Task 3.3: \n\t- Berechne CA-CFAR Schwellenwerte (threshold_factor={self.threshold_factor})")
-
-
-    #     # Validierung / Default-Handling
-    #     if data is None:
-    #         if hasattr(self, "fft_shifted"):
-    #             data = np.abs(self.fft_shifted)
-    #         else:
-    #             raise ValueError("Kein `data` übergeben und `self.fft_shifted` nicht vorhanden.")
-    #     else:
-    #         data = np.asarray(data)
-
-    #     kernel = self.CFAR_kernel       # definierter CFAR-Kernel 
-          
-    #     kernel = np.asarray(kernel, dtype=np.int8)
-    #     if kernel.ndim != 2:
-    #         raise ValueError("kernel muss 2D sein.")
-
-    #     # Trainingsmask extrahieren (1 = Training)
-    #     train_mask = (kernel == 1).astype(np.int8)
-    #     n_train_total = int(np.sum(train_mask))
-
-    #     # Verwende 2D-Korrelation (keine Kernel-Flip) für effiziente Berechnung
-    #     from scipy.signal import correlate2d
-
-    #     # Leistung je Zelle (linear): |x|^2
-    #     power_map = np.abs(data) ** 2
-
-    #     # Anzahl tatsächlich überlappender Trainingszellen an jeder Position
-    #     ones_map = np.ones_like(power_map, dtype=np.int32)
-    #     train_counts = correlate2d(ones_map, train_mask, mode='same', boundary='fill', fillvalue=0)
-
-    #     # Summe der Leistungen über Trainingszellen an jeder Position
-    #     train_power_sum = correlate2d(power_map, train_mask, mode='same', boundary='fill', fillvalue=pad_fill)
-
-    #     # Vermeide Division durch 0: nur dort berechnen, wo train_counts > 0
-    #     thresholds = np.full_like(train_power_sum, np.nan, dtype=float)
-    #     valid = train_counts > 0
-    #     thresholds[valid] = (train_power_sum[valid] / train_counts[valid]) * float(threshold_factor)
-
-    #     # Speichere Ergebnisse in der Instanz
-    #     self.cfar_thresholds = thresholds
-    #     self.cfar_train_counts = train_counts
-    #     self.cfar_threshold_factor = threshold_factor
-
-    #     if self.output_print:
-    #         self._log(f"\t- CA-CFAR Schwellenwerte berechnet (threshold_factor={threshold_factor}).")
-    #         self._log(f"\t  - Kernel-Trainingszellen (global): {n_train_total}")
-    #         self._log(f"\t  - Shape thresholds: {thresholds.shape}")
-
-    #     return thresholds
 
     def compute_cfar_thresholds(self, data=None, kernel=None, threshold_factor=1.5, pad_fill=0,
                                 method='ca', os_rank=0.75, os_multiplier=1.0,
@@ -1381,10 +1447,17 @@ class Radar:
         return normalized_masked_db
     
 
+        
+    
     def plot_range_profile_at_detection(self, detection_index=0):
         """
         Zeigt das Entfernungsprofil (Range-Dimension) für eine bestimmte Detektion.
         Verwendet absolute Power in dB (nicht normalisiert), um positive Werte zu zeigen.
+
+        Erweiterung:
+        - Zweizeilige Darstellung:
+          * Oben: unveränderte Range-Plot (wie vorher)
+          * Unten: Doppler-Profile (Zeile entlang Doppler bei r_bin) mit CFAR-Schwelle
         """
 
         # Fallback auf cfar_detections (nur Task 3)
@@ -1415,7 +1488,7 @@ class Radar:
         power_linear = np.abs(range_profile) ** 2
         power_db = 10 * np.log10(power_linear + 1e-20)  # Vermeide log(0)
         
-        # NEU: Extrahiere CFAR-Threshold für diesen Doppler-Bin
+        # NEU: Extrahiere CFAR-Threshold für diesen Doppler-Bin (Range-Achse)
         if hasattr(self, 'cfar_thresholds'):
             cfar_threshold_linear = self.cfar_thresholds[:, d_bin]
             # Konvertiere zu dB (Power-Skala)
@@ -1435,32 +1508,35 @@ class Radar:
         range_peak = range_axis[peak_bin]        # 1D-Peak
         velocity_m_s = velocity_axis[d_bin]
         
-        # Plot erstellen
-        plt.figure(figsize=(12, 6))
-        plt.plot(range_axis, power_db, 'b-', linewidth=1.5, label='Signal')
+        # ------------------------------
+        # Neues Layout: 2 Zeilen (Range oben, Doppler unten)
+        # ------------------------------
+        fig, (ax_range, ax_doppler) = plt.subplots(2, 1, figsize=(12, 10), sharex=False)
         
-        # NEU: Plotte CFAR-Threshold
+        # ------- Range-Plot (UNVERÄNDERT, nur auf ax_range) -------
+        ax_range.plot(range_axis, power_db, 'b-', linewidth=1.5, label='Signal')
+        
+        # Plotte CFAR-Threshold
         if cfar_threshold_db is not None:
-            plt.plot(range_axis, cfar_threshold_db, color='orange', linewidth=2, 
-                    label='Threshold', alpha=0.8)
+            ax_range.plot(range_axis, cfar_threshold_db, color='orange', linewidth=2, 
+                          label='Threshold', alpha=0.8)
         
-        # NEU: Markiere ALLE Detektionen bei diesem Doppler-Bin mit roten Punkten
+        # Markiere ALLE Detektionen bei diesem Doppler-Bin mit roten Punkten
         detections_at_doppler = det_indices[det_indices[:, 1] == d_bin]
         if len(detections_at_doppler) > 0:
             detection_ranges = range_axis[detections_at_doppler[:, 0]]
             detection_powers = power_db[detections_at_doppler[:, 0]]
-            plt.plot(detection_ranges, detection_powers, 'o', color='yellow', 
-                    markersize=10, markeredgecolor='red', markeredgewidth=2,
-                    label=f'Detections ({len(detections_at_doppler)})', zorder=5)
+            ax_range.plot(detection_ranges, detection_powers, 'o', color='yellow', 
+                          markersize=10, markeredgecolor='red', markeredgewidth=2,
+                          label=f'Detections ({len(detections_at_doppler)})', zorder=5)
         
         # Markiere die aktuell ausgewählte CFAR-Detektion mit vertikaler Linie
-        plt.axvline(x=range_detection, color='r', linestyle='--', linewidth=2, 
-                    label=f'Selected Detection at {range_detection:.2f} m', alpha=0.7)
+        ax_range.axvline(x=range_detection, color='r', linestyle='--', linewidth=2, 
+                         label=f'Selected Detection at {range_detection:.2f} m', alpha=0.7)
     
-        
         # Beschriftung
-        plt.xlabel('Range (m)', fontsize=12)
-        plt.ylabel('Receive Power (dB)', fontsize=12)  # NEU: Absolute Power
+        ax_range.set_xlabel('Range (m)', fontsize=12)
+        ax_range.set_ylabel('Receive Power (dB)', fontsize=12)  # Absolute Power
         
         title_str = f'Range Profile at Velocity = {velocity_m_s:.3f} m/s ({velocity_m_s*3.6:.2f} km/h)\n'
         title_str += f'Detection #{detection_index+1} (Range Bin: {r_bin}, Doppler Bin: {d_bin}'
@@ -1468,19 +1544,64 @@ class Radar:
             title_str += f', Azimuth: {azimuth_deg:.1f}°'
         title_str += f')\nData File: {self.radar_file_3D.name}'
         
-        plt.title(title_str, fontsize=14)
-        plt.grid(True, alpha=0.3)
-        plt.legend(fontsize=10)
+        ax_range.set_title(title_str, fontsize=14)
+        ax_range.grid(True, alpha=0.3)
+        ax_range.legend(fontsize=10)
         
-        # NEU: Automatische Y-Achsen-Limits basierend auf Daten
+        # Automatische Y-Achsen-Limits basierend auf Daten
         y_min = np.percentile(power_db[np.isfinite(power_db)], 1)  # 1. Perzentil
         y_max = np.max(power_db[np.isfinite(power_db)]) + 5
-        plt.ylim([y_min, y_max])
+        ax_range.set_ylim([y_min, y_max])
+        
+        
+        # ------- Doppler-Plot (neu, entlang Doppler für festen r_bin) -------
+        doppler_profile = self.fft_shifted[r_bin, :]
+        doppler_power_linear = np.abs(doppler_profile) ** 2
+        doppler_power_db = 10 * np.log10(doppler_power_linear + 1e-20)
+        
+        # CFAR-Threshold entlang Doppler (falls vorhanden)
+        if hasattr(self, 'cfar_thresholds'):
+            cfar_threshold_doppler_linear = self.cfar_thresholds[r_bin, :]
+            cfar_threshold_doppler_db = 10 * np.log10(cfar_threshold_doppler_linear + 1e-20)
+        else:
+            cfar_threshold_doppler_db = None
+        
+        # X-Achse: velocity_axis
+        ax_doppler.plot(velocity_axis, doppler_power_db, 'b-', linewidth=1.5, label='Signal (Doppler slice)')
+        
+        if cfar_threshold_doppler_db is not None:
+            ax_doppler.plot(velocity_axis, cfar_threshold_doppler_db, color='orange', linewidth=2,
+                            label='Threshold (Doppler)', alpha=0.8)
+        
+        # Markiere Detektionen an diesem Range (alle Doppler-Bins mit Detektionen)
+        detections_at_range = det_indices[det_indices[:, 0] == r_bin]
+        if len(detections_at_range) > 0:
+            det_d_bins = detections_at_range[:, 1]
+            det_velocities = velocity_axis[det_d_bins]
+            det_powers = doppler_power_db[det_d_bins]
+            ax_doppler.plot(det_velocities, det_powers, 'o', color='yellow',
+                            markersize=10, markeredgecolor='red', markeredgewidth=2,
+                            label=f'Detections ({len(detections_at_range)})', zorder=5)
+        
+        # Markiere die aktuell ausgewählte Doppler-Bin mit einer vertikalen Linie
+        ax_doppler.axvline(x=velocity_m_s, color='r', linestyle='--', linewidth=2,
+                           label=f'Selected Doppler {velocity_m_s:.3f} m/s', alpha=0.7)
+        
+        ax_doppler.set_xlabel('Velocity (m/s)', fontsize=12)
+        ax_doppler.set_ylabel('Receive Power (dB)', fontsize=12)
+        ax_doppler.set_title(f'Doppler Profile at Range = {range_detection:.2f} m (Bin {r_bin})', fontsize=12)
+        ax_doppler.grid(True, alpha=0.3)
+        ax_doppler.legend(fontsize=10)
+        
+        # Automatische Y-Limits für Doppler-Plot
+        y_min_d = np.percentile(doppler_power_db[np.isfinite(doppler_power_db)], 1)
+        y_max_d = np.max(doppler_power_db[np.isfinite(doppler_power_db)]) + 5
+        ax_doppler.set_ylim([y_min_d, y_max_d])
         
         plt.tight_layout()
         plt.show()
         
-        # Log-Ausgabe
+        # Log-Ausgabe (unchanged)
         if self.output_print:
             self._log(f"\n - Range Profile Plot:")
             self._log(f"\t- Detection #{detection_index+1}")
@@ -1489,7 +1610,6 @@ class Radar:
             self._log(f"\t- Velocity: {velocity_m_s:.3f} m/s = {velocity_m_s*3.6:.2f} km/h (Bin {d_bin})")
             if has_angle_info:
                 self._log(f"\t- Azimuth Angle: {azimuth_deg:.1f}°")
-
 
     ################
     # FOR TASK 4   #
