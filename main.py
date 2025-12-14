@@ -33,7 +33,7 @@ def MRR_CornField_Config():
     radar_file_3D = "./RadarCube/MRR_CornField/3D/RadarCube"
     radar_file_4D = "./RadarCube/MRR_CornField/4D/ADCCube"
 
-    threshold_factor = 15  # 15 für bessere Sensitivität
+    threshold_factor = 300  # 15 für bessere Sensitivität
     factor_formular_max_velocity = 10
 
     #Empfohlene Werte zum Testen:
@@ -62,21 +62,21 @@ def MRR_CornField_Config():
 def main():
     
     # Create Radar object
-    #USSR_radar = Radar(*USRR_Dynamic_Config(), num=1, use_tk=True, output_print=True)
+    USSR_radar = Radar(*USRR_Dynamic_Config(), num=8, use_tk=True, output_print=True)
     
     # Tasks ausführen
-    #USSR_radar.Task_Step_1()
-    #USSR_radar.Task_Step_2()
-    #USSR_radar.Task_Step_3()
-    #USSR_radar.Task_Step_4()
+    USSR_radar.Task_Step_1()
+    USSR_radar.Task_Step_2()
+    USSR_radar.Task_Step_3()
+    USSR_radar.Task_Step_4()
 
-    # Create Radar object
-    MRR_radar = Radar(*MRR_CornField_Config(), num=0, use_tk=True, output_print=True)
-    # Tasks ausführen
-    MRR_radar.Task_Step_1()
-    MRR_radar.Task_Step_2()
-    MRR_radar.Task_Step_3()
-    MRR_radar.Task_Step_4()
+    # # Create Radar object
+    # MRR_radar = Radar(*MRR_CornField_Config(), num=8, use_tk=True, output_print=True)
+    # # Tasks ausführen
+    # MRR_radar.Task_Step_1()
+    # MRR_radar.Task_Step_2()
+    # MRR_radar.Task_Step_3()
+    # MRR_radar.Task_Step_4()
 
 if __name__ == "__main__":
     main()
