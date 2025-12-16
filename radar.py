@@ -71,7 +71,7 @@ class Radar:
 
 
         # Windowing parameters
-        self.Range_window_type = 'hanning' # 'hanning' # 'boxcar'
+        self.Range_window_type = 'boxcar' # 'hanning' # 'boxcar'
         self.Doppler_window_type = 'hanning' # 'hanning'
         self.window_name = [self.Range_window_type, self.Doppler_window_type]   #['blackman', 'hanning']  , ['blackman', 'blackman']
 
@@ -263,7 +263,7 @@ class Radar:
 
 
         # Task 3.7 Visualisierung der detektierten Objekte als Velocity Profile
-        self.plot_range_profile_at_detection(detection_index=0, matlab_filename=f"Task3_RangeProfile_Detection0_{self._get_current_data_filename()}.mat")
+        self.plot_range_profile_at_detection(detection_index=0, matlab_filename=f"Task3_RangeProfile_Detection0_{self._get_current_data_filename()}_fact_{self.threshold_factor}_Rang_{self.Range_window_type}_Dopp_{self.Doppler_window_type}.mat")
 
         self.report_cfar_detections()
 
