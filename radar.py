@@ -6,6 +6,8 @@ from mpl_toolkits.mplot3d import Axes3D
 from scipy.signal import get_window
 from scipy.ndimage import label, center_of_mass, maximum_filter
 from tkinter_fenster import TkPrinter
+from scipy.io import savemat
+import scipy.io as sio # Wichtig: Import nicht vergessen
 
 
 ###########################################################
@@ -27,18 +29,26 @@ class Radar:
             print(msg, end='')
 
 
-    def __init__(self, radar_file_3D, radar_file_4D, threshold_factor, factor_formular_max_velocity, f_center, B, f_sampling, num_samples, tc, chirp_slope, num_chirps, Rx_gain, Tx_Channels, Rx_Channels, num=0, use_tk=False, output_print=True):
+    def __init__(self, radar_file_3D, radar_file_4D, threshold_factor, factor_formular_max_velocity, f_center, B, f_sampling, num_samples, tc, chirp_slope, num_chirps, Rx_gain, Tx_Channels, Rx_Channels, num=0, use_tk=False, output_print=True, Dim_4=False):
         # Path to radar cube data
         self.radar_file_3D = Path(radar_file_3D + f"{num}.npy")
-        self.radar_file_4D = Path(radar_file_4D + f"{num}.npy")
+        self.radar_file_4D = Path(radar_file_4D + f"{num}.npy") if (radar_file_4D and radar_file_4D != "") else None
+        self.Dim_4 = Dim_4  # Flag to indicate if 4D data processing is enabled
 
         self.output_print = output_print
         if self.output_print:
             self.use_tk = bool(use_tk)
-            self.printer = TkPrinter(title=f"Radar Logs: {self.radar_file_3D.name}")
+            display_name = self.radar_file_4D.name if (self.Dim_4 and self.radar_file_4D) else self.radar_file_3D.name
+            self.printer = TkPrinter(title=f"Radar Logs: {display_name}")
 
-            self._log(f"\nInitializing Radar with file: {self.radar_file_3D}")
+            if self.Dim_4 and self.radar_file_4D:
+                self._log(f"\nInitializing Radar with 4D data file: {self.radar_file_4D}")
+            else:
+                self._log(f"\nInitializing Radar with 3D data file: {self.radar_file_3D}")
 
+        if radar_file_4D == "" and Dim_4 == True:
+            self._log(f"Warnung: 4D Radar-Dateipfad ist leer, aber Dim_4=True gesetzt. 4D-Funktionen werden nicht verfügbar sein.")
+            exit()
 
         # Konstants
         self.c = 299792458  # Lichtgeschwindigkeit in m/s
@@ -96,7 +106,25 @@ class Radar:
         # Load Antenna Array
         antenna_array_path = Path("./RadarCube/AntennaArray.npy")
         antenna_array_raw = np.load(antenna_array_path).astype(np.float64)
-        self.AntennaPositions = antenna_array_raw
+        # Heuristik: falls die Positionswerte sehr groß sind (z.B. 0..85),
+        # dann sind sie wahrscheinlich in Einheiten von "halben Wellenlängen".
+        # In diesem Fall skaliere auf Meter: pos_m = counts * (wavelength/2)
+        # Andernfalls nehme an, die Datei enthält bereits Meter.
+        try:
+            max_val = float(np.max(np.abs(antenna_array_raw)))
+        except Exception:
+            max_val = 0.0
+
+        # Temporäre Wellenlänge aus dem übergebenen f_center verwenden (self.wavelength noch nicht gesetzt)
+        temp_wavelength = float(self.c / f_center) if 'f_center' in locals() or 'f_center' in globals() else None
+
+        if temp_wavelength is not None and max_val > 10 * (temp_wavelength):
+            # Skaliere
+            self.AntennaPositions = antenna_array_raw * (temp_wavelength / 2.0)
+            if self.output_print:
+                self._log(f"\t- Hinweis: AntennaPositions skaliert von counts -> Meter mit factor wavelength/2 ({temp_wavelength/2.0:.6e} m)")
+        else:
+            self.AntennaPositions = antenna_array_raw
 
         ##############
         # f_center oder f_0 ?
@@ -115,12 +143,18 @@ class Radar:
         print(f"Antenna Positions loaded from {antenna_array_path}, shape: {self.AntennaPositions.shape}\n\n")
         #print(self.AntennaPositions)
 
+    def _get_current_data_filename(self):
+        """Returns the name of the currently used data file (3D or 4D)"""
+        if self.Dim_4 and self.radar_file_4D:
+            return self.radar_file_4D.name
+        return self.radar_file_3D.name
+
     def Task_Step_1(self):
         if self.output_print:
             # Print wht File is being processed
             self._log(f"\n------------------------------------------------------------------------------------------------")
             self._log(f"------------------------------------------------------------------------------------------------")
-            self._log(f"\nTask 1: (Processing file {self.radar_file_3D.name})")
+            self._log(f"\nTask 1: (Processing file {self._get_current_data_filename()})")
     
 
         # TASK 1.1 Load radar cube
@@ -152,7 +186,7 @@ class Radar:
             # Task 2: Print Key Parameters and Plot Range-Doppler Map
             self._log(f"\n------------------------------------------------------------------------------------------------")
             self._log(f"------------------------------------------------------------------------------------------------")
-            self._log(f"\nTask 2: (Processing file {self.radar_file_3D.name})")
+            self._log(f"\nTask 2: (Processing file {self._get_current_data_filename()})")
        
         # TASK 2.1 Calculation of Key Parameters
         self.calculation_of_key_parameter()
@@ -174,6 +208,17 @@ class Radar:
         self.plot_fft_results(name="All Channels Summed", Task="2.4")
 
         self.plot_fft_results_3d(name="All Channels Summed 3D")
+        # If 4D ADC data is available and 4D processing is enabled, compute the 4D Range/Doppler FFT
+        # now so that subsequent tasks (Task 3 CFAR, Task 5 angle estimation) can use the
+        # per-Rx/Tx Range-Doppler cubes directly.
+        if self.Dim_4 and getattr(self, 'ADCCube_4D', None) is not None:
+            try:
+                if self.output_print:
+                    self._log(f"\n - Detected 4D ADC-Cube: preparing 4D Range/Doppler FFT for angular processing")
+                self.perform_4d_fft()
+            except Exception as e:
+                if self.output_print:
+                    self._log(f"\t- Warnung: perform_4d_fft() schlug fehl: {e}")
 
 
 
@@ -182,7 +227,7 @@ class Radar:
             # Task 3 Implementierung
             self._log(f"\n------------------------------------------------------------------------------------------------")
             self._log(f"------------------------------------------------------------------------------------------------")  
-            self._log(f"\nTask 3: (Processing file {self.radar_file_3D.name})")
+            self._log(f"\nTask 3: (Processing file {self._get_current_data_filename()})")
 
 
         # Task 3.1 Kernel generieren und in Instanz abspeichern
@@ -218,7 +263,7 @@ class Radar:
 
 
         # Task 3.7 Visualisierung der detektierten Objekte als Velocity Profile
-        self.plot_range_profile_at_detection(detection_index=0)
+        self.plot_range_profile_at_detection(detection_index=0, matlab_filename=f"Task3_RangeProfile_Detection0_{self._get_current_data_filename()}.mat")
 
         self.report_cfar_detections()
 
@@ -227,7 +272,7 @@ class Radar:
         if self.output_print:
             self._log(f"\n------------------------------------------------------------------------------------------------")
             self._log(f"------------------------------------------------------------------------------------------------")
-            self._log(f"\nTask 4: Angle Estimation & 3D Localization (Processing file {self.radar_file_3D.name})")
+            self._log(f"\nTask 4: Angle Estimation & 3D Localization (Processing file {self._get_current_data_filename()})")
         
         # 4.1 Berechne Wellenlänge und Antennenabstand
         self._calculate_antenna_parameters()
@@ -240,6 +285,307 @@ class Radar:
         
         # 4.4 3D-Visualisierung der Objekte
         self._plot_3d_detections()
+
+
+    def Task_Step_5(self):
+        if self.output_print:
+            self._log(f"\n------------------------------------------------------------------------------------------------")
+            self._log(f"------------------------------------------------------------------------------------------------")
+            self._log(f"\nTask 5: Elevation & Azimuth Angle Estimation from 4D Data (Processing file {self._get_current_data_filename()})")
+        
+        # Prüfe ob 4D-Daten verfügbar sind
+        if not self.Dim_4 or self.radar_file_4D is None:
+            if self.output_print:
+                self._log(f"\n\t⚠ Task 5 übersprungen: Keine 4D-Daten verfügbar")
+            return
+        
+        # Stelle sicher, dass CFAR-Detektionen existieren
+        if not hasattr(self, 'cfar_detections') or self.cfar_detections is None:
+            if self.output_print:
+                self._log(f"\n\t⚠ Keine CFAR-Detektionen gefunden. Führe zuerst Task 3 aus.")
+            return
+        
+        if self.output_print:
+            self._log(f"\n - Task 5.1: Winkelschätzung mit 4D-Daten")
+            self._log(f"\t- Verwende 4D ADC-Cube für separate Elevation- und Azimuth-Schätzung")
+        
+        # Filtere Azimuth-Antennen (y=0, horizontal)
+        azimuth_ind = np.where(self.AntennaPositions[:, 1] == 0)[0]
+        azimuth_positions = self.AntennaPositions[azimuth_ind, 0]
+        val, indices = np.unique(azimuth_positions, return_index=True)
+        AzimuthAntennaOnly = azimuth_ind[indices]
+        
+        # Filtere Elevation-Antennen (x=0, vertikal)
+        elevation_ind = np.where(self.AntennaPositions[:, 0] == 0)[0]
+        elevation_positions = self.AntennaPositions[elevation_ind, 1]
+        val, indices = np.unique(elevation_positions, return_index=True)
+        ElevationAntennaOnly = elevation_ind[indices]
+        
+        # Antennenabstand
+        d_antenna = self.wavelength / 2
+        
+        if self.output_print:
+            self._log(f"\t- Azimuth-Antennen: {len(AzimuthAntennaOnly)} (y=0)")
+            self._log(f"\t- Elevation-Antennen: {len(ElevationAntennaOnly)} (x=0)")
+            self._log(f"\t- Antennenabstand: {d_antenna*1000:.3f} mm")
+            self._log(f"\t- Wellenlänge: {self.wavelength*1000:.3f} mm")
+        
+        # Finde alle Detektionen
+        det_indices = np.argwhere(self.cfar_detections == 1)
+        
+        if len(det_indices) == 0:
+            if self.output_print:
+                self._log(f"\t- Keine Detektionen gefunden")
+            return
+        
+        range_axis = np.linspace(0, self.range_max, self.num_samples)
+        velocity_axis = np.linspace(-self.vel_max, self.vel_max, self.num_chirps)
+        
+        if self.output_print:
+            self._log(f"\t- Verarbeite {len(det_indices)} Detektionen...")
+        
+        # Speichere Ergebnisse
+        detections_with_angles = []
+        # Falls 4D-Daten vorliegen: berechne 4D-FFT (Range/Doppler für alle Rx/Tx)
+        if hasattr(self, 'ADCCube_4D') and self.ADCCube_4D is not None:
+            try:
+                self.perform_4d_fft()
+            except Exception as e:
+                if self.output_print:
+                    self._log(f"\t- Warnung: perform_4d_fft() schlug fehl: {e} - fahre mit 3D-Virtual-Array fort")
+        
+        for det_num, idx in enumerate(det_indices):
+            r_bin, d_bin = idx
+            
+            # Wenn 4D-ADC-Daten vorhanden sind: benutze die Rx x Tx Matrix direkt
+            if hasattr(self, 'fft_4d_shifted') and getattr(self, 'fft_4d_shifted') is not None:
+                # Antennenmatrix (Rx x Tx) für diesen Range-Doppler-Bin
+                try:
+                    ant_mat = self.fft_4d_shifted[r_bin, d_bin, :, :]
+                except Exception:
+                    # Fallback: falls Achsen in anderer Reihenfolge
+                    ant_mat = np.squeeze(self.fft_4d_shifted[r_bin, d_bin])
+
+                # 2D-FFT über Antennenmatrix um 2D-Angularspektrum zu erhalten
+                nfft_x = max(64, ant_mat.shape[0] * 4)
+                nfft_y = max(64, ant_mat.shape[1] * 4)
+                ang2d = np.fft.fftshift(np.fft.fft2(ant_mat, s=(nfft_x, nfft_y)))
+                ang2d_mag = np.abs(ang2d)
+
+                # Bestimme Elementabstände / effektive Rasterbreiten aus geschätzten Rx/Tx-Positionen falls vorhanden
+                if getattr(self, 'Rx_positions_est', None) is not None and getattr(self, 'Tx_positions_est', None) is not None:
+                    rx_pos = self.Rx_positions_est
+                    tx_pos = self.Tx_positions_est
+                    # projiziere auf x- bzw. y-Achse
+                    ux = np.unique(np.round(rx_pos[:, 0], 9)) if rx_pos.size>0 else np.array([])
+                    uy = np.unique(np.round(tx_pos[:, 1], 9)) if tx_pos.size>0 else np.array([])
+                    if ux.size > 1:
+                        d_x = float(np.mean(np.diff(np.sort(ux))))
+                    else:
+                        d_x = d_antenna
+                    if uy.size > 1:
+                        d_y = float(np.mean(np.diff(np.sort(uy))))
+                    else:
+                        d_y = d_antenna
+                else:
+                    # Fallback auf virtuelle AntennaPositions
+                    x_positions = self.AntennaPositions[:, 0]
+                    y_positions = self.AntennaPositions[:, 1]
+                    ux = np.unique(np.round(x_positions, 9)) if x_positions.size>0 else np.array([])
+                    uy = np.unique(np.round(y_positions, 9)) if y_positions.size>0 else np.array([])
+                    if ux.size > 1:
+                        d_x = np.mean(np.diff(np.sort(ux)))
+                    else:
+                        d_x = d_antenna
+                    if uy.size > 1:
+                        d_y = np.mean(np.diff(np.sort(uy)))
+                    else:
+                        d_y = d_antenna
+
+                # Indices der Peak-Lokation
+                max_idx_flat = np.argmax(ang2d_mag)
+                ix, iy = np.unravel_index(max_idx_flat, ang2d_mag.shape)
+
+                # Konvertiere Indices in sin(theta) Schätzer (vereinfachte Näherung)
+                kx = ix - (ang2d_mag.shape[0] / 2)
+                ky = iy - (ang2d_mag.shape[1] / 2)
+                sin_x = (kx / (ang2d_mag.shape[0] / 2)) * (self.wavelength / (2 * d_x))
+                sin_y = (ky / (ang2d_mag.shape[1] / 2)) * (self.wavelength / (2 * d_y))
+                sin_x = np.clip(sin_x, -1, 1)
+                sin_y = np.clip(sin_y, -1, 1)
+                az_rad = np.arcsin(sin_x)
+                el_rad = np.arcsin(sin_y)
+                estimated_azimuth = np.degrees(az_rad)
+                estimated_elevation = np.degrees(el_rad)
+                max_power_az = 20*np.log10(np.max(ang2d_mag) + 1e-12)
+                max_power_el = max_power_az
+
+                # Erzeuge 1D-Schnitte für Visualisierung (summe über Achse)
+                az_1d = np.sum(ang2d_mag, axis=1)
+                el_1d = np.sum(ang2d_mag, axis=0)
+
+                # Erzeuge Winkelskalen für die 1D-Schnitte
+                k_bins_az = np.arange(ang2d_mag.shape[0]) - ang2d_mag.shape[0] / 2
+                theta_az_deg = np.degrees(np.arcsin(np.clip((k_bins_az / (ang2d_mag.shape[0]/2)) * (self.wavelength/(2*d_x)), -1, 1)))
+                k_bins_el = np.arange(ang2d_mag.shape[1]) - ang2d_mag.shape[1] / 2
+                theta_el_deg = np.degrees(np.arcsin(np.clip((k_bins_el / (ang2d_mag.shape[1]/2)) * (self.wavelength/(2*d_y)), -1, 1)))
+
+                power_az_db = 20*np.log10(az_1d + 1e-12)
+                power_el_db = 20*np.log10(el_1d + 1e-12)
+
+            else:
+                # Fallback auf vorherige Implementierung (3D virtual array)
+                antenna_signal = self.AntennaArray[r_bin, d_bin, :]
+                x_azimuth = antenna_signal[AzimuthAntennaOnly]
+                window_az = get_window('hann', len(x_azimuth))
+                nfft_az = 512
+                azimuth_fft = np.fft.fft(x_azimuth * window_az, n=nfft_az)
+                azimuth_fft_shifted = np.fft.fftshift(azimuth_fft)
+                azimuth_spectrum = np.abs(azimuth_fft_shifted)
+                k_bins_az = np.arange(nfft_az) - nfft_az / 2
+                sin_theta_az = (k_bins_az / (nfft_az/2)) * (self.wavelength / (2 * d_antenna))
+                sin_theta_az = np.clip(sin_theta_az, -1, 1)
+                theta_az_rad = np.arcsin(sin_theta_az)
+                theta_az_deg = np.degrees(theta_az_rad)
+                power_az_db = 10 * np.log10(azimuth_spectrum**2 + 1e-10)
+                max_idx_az = np.argmax(power_az_db)
+                estimated_azimuth = theta_az_deg[max_idx_az]
+                max_power_az = power_az_db[max_idx_az]
+
+                x_elevation = antenna_signal[ElevationAntennaOnly]
+                window_el = get_window('hann', len(x_elevation))
+                nfft_el = 512
+                elevation_fft = np.fft.fft(x_elevation * window_el, n=nfft_el)
+                elevation_fft_shifted = np.fft.fftshift(elevation_fft)
+                elevation_spectrum = np.abs(elevation_fft_shifted)
+                k_bins_el = np.arange(nfft_el) - nfft_el / 2
+                sin_theta_el = (k_bins_el / (nfft_el/2)) * (self.wavelength / (2 * d_antenna))
+                sin_theta_el = np.clip(sin_theta_el, -1, 1)
+                theta_el_rad = np.arcsin(sin_theta_el)
+                theta_el_deg = np.degrees(theta_el_rad)
+                power_el_db = 10 * np.log10(elevation_spectrum**2 + 1e-10)
+                max_idx_el = np.argmax(power_el_db)
+                estimated_elevation = theta_el_deg[max_idx_el]
+                max_power_el = power_el_db[max_idx_el]
+            
+            # Berechne physikalische Werte
+            range_m = range_axis[r_bin]
+            velocity_m_s = velocity_axis[d_bin]
+            magnitude = np.abs(self.fft_shifted[r_bin, d_bin])
+            
+            # Speichere Detektion
+            detection_dict = {
+                'range_m': range_m,
+                'velocity_m_s': velocity_m_s,
+                'azimuth_deg': estimated_azimuth,
+                'elevation_deg': estimated_elevation,
+                'magnitude': magnitude,
+                'r_bin': r_bin,
+                'd_bin': d_bin,
+                'power_az_db': max_power_az,
+                'power_el_db': max_power_el
+            }
+            detections_with_angles.append(detection_dict)
+            
+            # ========== PLOTTING ==========
+            # ========== PLOTTING ==========
+            # Ensure arrays exist
+            try:
+                t_az = np.asarray(theta_az_deg)
+            except Exception:
+                t_az = np.array([0.0])
+            try:
+                p_az = np.asarray(power_az_db)
+            except Exception:
+                p_az = np.array([0.0])
+            try:
+                t_el = np.asarray(theta_el_deg)
+            except Exception:
+                t_el = np.array([0.0])
+            try:
+                p_el = np.asarray(power_el_db)
+            except Exception:
+                p_el = np.array([0.0])
+
+            # Sort for monotonic x-axis
+            az_order = np.argsort(t_az)
+            el_order = np.argsort(t_el)
+            t_az_s = t_az[az_order]
+            p_az_s = p_az[az_order]
+            t_el_s = t_el[el_order]
+            p_el_s = p_el[el_order]
+
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+
+            # Azimuth
+            ax1.plot(t_az_s, p_az_s, 'b-', linewidth=1.5, label='Azimuth-Spektrum')
+            # interpolate marker y
+            try:
+                y_az_peak = float(np.interp(estimated_azimuth, t_az_s, p_az_s))
+            except Exception:
+                y_az_peak = float(max_power_az)
+            ax1.plot(estimated_azimuth, y_az_peak, 'ro', markersize=8, label=f'Peak bei {estimated_azimuth:.2f}°')
+            ax1.axvline(estimated_azimuth, color='r', linestyle='--', linewidth=1.2, alpha=0.7)
+            ax1.set_xlabel('Azimuth-Winkel [Grad]')
+            ax1.set_ylabel('Leistung [dB]')
+            ax1.set_title(f'Azimuth-Spektrum (Horizontal, y=0)\nPeak: {estimated_azimuth:.2f}°, Power: {y_az_peak:.1f} dB')
+            ax1.grid(True, alpha=0.3)
+            ax1.legend(fontsize=9)
+            # set x-limits to data range (fallback to FOV)
+            try:
+                ax1.set_xlim(float(t_az_s.min()), float(t_az_s.max()))
+            except Exception:
+                ax1.set_xlim(self.FOV_min, self.FOV_max)
+
+            # Elevation
+            ax2.plot(t_el_s, p_el_s, 'g-', linewidth=1.5, label='Elevation-Spektrum')
+            try:
+                y_el_peak = float(np.interp(estimated_elevation, t_el_s, p_el_s))
+            except Exception:
+                y_el_peak = float(max_power_el)
+            ax2.plot(estimated_elevation, y_el_peak, 'ro', markersize=8, label=f'Peak bei {estimated_elevation:.2f}°')
+            ax2.axvline(estimated_elevation, color='r', linestyle='--', linewidth=1.2, alpha=0.7)
+            ax2.set_xlabel('Elevation-Winkel [Grad]')
+            ax2.set_ylabel('Leistung [dB]')
+            ax2.set_title(f'Elevation-Spektrum (Vertikal, x=0)\nPeak: {estimated_elevation:.2f}°, Power: {y_el_peak:.1f} dB')
+            ax2.grid(True, alpha=0.3)
+            ax2.legend(fontsize=9)
+            try:
+                ax2.set_xlim(float(t_el_s.min()), float(t_el_s.max()))
+            except Exception:
+                ax2.set_xlim(self.FOV_min, self.FOV_max)
+
+            # Overall title
+            fig.suptitle(f"Task 5: Detektion #{det_num+1} - Azimuth & Elevation Winkelschätzung\n"
+                         f"Range: {range_m:.2f}m (Bin {r_bin}), Velocity: {velocity_m_s:.3f}m/s (Bin {d_bin})",
+                         fontsize=13, fontweight='bold')
+
+            plt.tight_layout(rect=[0, 0, 1, 0.95])
+
+            # ensure output folder exists and save
+            try:
+                out_dir = Path('plots')
+                out_dir.mkdir(parents=True, exist_ok=True)
+                outname = out_dir / f'task5_detection_{det_num+1}.png'
+                plt.savefig(outname, dpi=150)
+                if self.output_print:
+                    self._log(f"\t- Saved Task5 plot: {outname}")
+            except Exception:
+                pass
+
+            plt.show()
+            
+            # Log-Ausgabe
+            if self.output_print:
+                self._log(f"\t  Detektion #{det_num+1}: Range={range_m:.2f}m, Vel={velocity_m_s:.3f}m/s, "
+                         f"Azimuth={estimated_azimuth:.1f}°, Elevation={estimated_elevation:.1f}°")
+        
+        if self.output_print:
+            self._log(f"\n\t- Task 5 abgeschlossen")
+            self._log(f"\t- {len(detections_with_angles)} Objekte mit Azimuth- und Elevation-Winkeln geschätzt")
+        
+        # Speichere Ergebnisse für spätere Verwendung
+        self.detections_4d = detections_with_angles
        
 
     ################
@@ -248,11 +594,61 @@ class Radar:
 
     # Task 1.1 Function to load radar cube data
     def load_radar_cube(self):
-        """Load radar cube data from .npy file"""
-        self.AntennaArray = np.load(self.radar_file_3D)
+        """Load radar cube data from .npy file - supports both 3D and 4D data"""
+        
+        if self.Dim_4 and self.radar_file_4D and self.radar_file_4D.exists():
+            # Load 4D ADC data: (Samples, Chirps, Rx_Channels, Tx_Channels)
+            self.ADCCube_4D = np.load(self.radar_file_4D)
+            
+            if self.output_print:
+                self._log(f"\n- Task 1.1: \n\t- Load 4D ADC cube data from {self.radar_file_4D}")
+                self._log(f"\t- 4D Shape: {self.ADCCube_4D.shape} (Samples, Chirps, Rx, Tx)")
+            
+            # Convert 4D to 3D by creating virtual array (MIMO processing)
+            # For now: simple approach - reshape to match 3D format
+            num_samples, num_chirps, num_rx, num_tx = self.ADCCube_4D.shape
+            
+            # Create 3D representation: (Samples, Chirps, Virtual_Channels)
+            # Virtual_Channels = Rx * Tx (MIMO virtual array)
+            self.AntennaArray = self.ADCCube_4D.reshape(num_samples, num_chirps, num_rx * num_tx)
 
-        if self.output_print:
-            self._log(f"\n- Task 1.1: \n\t- Load radar cube data from {self.radar_file_3D}")
+            # Wenn Antennenpositions-Vektor existiert und dessen Länge gleich num_rx*num_tx ist,
+            # dann forme die Virtual-Positionsmatrix (Rx x Tx x 2) zur späteren Ableitung von Rx/Tx-Positionsschätzungen
+            try:
+                if hasattr(self, 'AntennaPositions') and self.AntennaPositions is not None:
+                    if self.AntennaPositions.shape[0] == (num_rx * num_tx):
+                        # reshape in (Rx, Tx, 2) - Annahme: Reihenfolge entspricht dem Flattening Rx,Tx (C-order)
+                        self.VirtualAntennaPositions = self.AntennaPositions.reshape((num_rx, num_tx, -1))
+                        # Schätze Rx- und Tx-Positionen (bis auf globale Verschiebung)
+                        overall_mean = np.mean(self.VirtualAntennaPositions.reshape(-1, self.VirtualAntennaPositions.shape[2]), axis=0)
+                        rx_mean = np.mean(self.VirtualAntennaPositions, axis=1)  # (Rx, 2)
+                        tx_mean = np.mean(self.VirtualAntennaPositions, axis=0)  # (Tx, 2)
+                        # subtract overall mean to get relative coordinates
+                        self.Rx_positions_est = rx_mean - overall_mean
+                        self.Tx_positions_est = tx_mean - overall_mean
+                    else:
+                        self.VirtualAntennaPositions = None
+                        self.Rx_positions_est = None
+                        self.Tx_positions_est = None
+                else:
+                    self.VirtualAntennaPositions = None
+                    self.Rx_positions_est = None
+                    self.Tx_positions_est = None
+            except Exception as e:
+                # Falls etwas schief geht: keine geschätzten Positionen
+                self.VirtualAntennaPositions = None
+                self.Rx_positions_est = None
+                self.Tx_positions_est = None
+            
+            if self.output_print:
+                self._log(f"\t- Converted to 3D virtual array shape: {self.AntennaArray.shape}")
+        else:
+            # Load 3D radar cube data: (Samples, Chirps, Channels)
+            self.AntennaArray = np.load(self.radar_file_3D)
+            self.ADCCube_4D = None  # No 4D data available
+            
+            if self.output_print:
+                self._log(f"\n- Task 1.1: \n\t- Load 3D radar cube data from {self.radar_file_3D}")
 
     # Helper function to normalize window names
     def _normalize_window_name(self, name):
@@ -275,7 +671,7 @@ class Radar:
         if num_samples != self.num_samples or num_chirps != self.num_chirps:
             print(f"Warnung: Expected Dimension ({self.num_samples}, {self.num_chirps}) are not equal to Format ({num_samples}, {num_chirps}).")
         else:
-            self._log(f"Loaded {self.radar_file_3D.name}\n - Number of Samples: {num_samples}\n - Number of Chirps: {num_chirps}\n - Number of Channels: {self.num_channels}\n\n")
+            self._log(f"Loaded {self._get_current_data_filename()}\n - Number of Samples: {num_samples}\n - Number of Chirps: {num_chirps}\n - Number of Channels: {self.num_channels}\n\n")
 
 
 
@@ -505,6 +901,38 @@ class Radar:
         self.fft_shifted = np.fft.fftshift(self.fft_result_2d, axes=(1,))
 
 
+    def perform_4d_fft(self, nfft_range=None, nfft_doppler=None):
+        """
+        Führt eine Range/Doppler-FFT über das 4D-ADC-Cube durch.
+        Ergebnis: self.fft_4d_shifted mit Shape (num_samples, num_chirps, Rx, Tx)
+        Dabei werden Range- und Doppler-Fenster aus self.window_range / self.window_doppler verwendet.
+        Optional können nfft_range / nfft_doppler angegeben werden (werden aber aktuell für Shift nicht benötigt).
+        """
+        if not hasattr(self, 'ADCCube_4D') or self.ADCCube_4D is None:
+            raise RuntimeError('Keine 4D-ADCCube zum Verarbeiten vorhanden')
+
+        # Fenster auf das ADC-Cube ausdehnen: (samples, chirps, 1, 1)
+        w_r = getattr(self, 'window_range', np.ones(self.num_samples))
+        w_d = getattr(self, 'window_doppler', np.ones(self.num_chirps))
+        window_2d = np.outer(w_r, w_d).reshape(self.num_samples, self.num_chirps, 1, 1)
+
+        # Wende Fenster an
+        adc_win = self.ADCCube_4D * window_2d
+
+        # FFT über Range & Doppler (Achsen 0 und 1)
+        fft_rd = np.fft.fft2(adc_win, axes=(0, 1))
+
+        # Shiftiere Doppler-Achse (axis=1) für Konsistenz mit anderen Plots
+        fft_rd_shifted = np.fft.fftshift(fft_rd, axes=(1,))
+
+        # Speichere Ergebnis
+        self.fft_4d = fft_rd
+        self.fft_4d_shifted = fft_rd_shifted
+
+        if self.output_print:
+            self._log(f"\t- Performed 4D FFT: result shape {self.fft_4d_shifted.shape} (samples, chirps, Rx, Tx)")
+
+
     ################
     # FOR TASK 2   #
     ################
@@ -570,7 +998,7 @@ class Radar:
             if self.output_print:
                 self._log(f"\n - Task 1.4: \n\t- Plot FFT Result for single channel {self.channel} without axes scaling")
 
-            title = f'Task 1: Range/Doppler Heat Map over channel {self.channel} \nData File: {self.radar_file_3D.name}'
+            title = f'Task 1: Range/Doppler Heat Map over channel {self.channel} \nData File: {self._get_current_data_filename()}'
             self._generic_plot_2d(self.normalized_db, extent=None,
                                 xlabel='Doppler Index (Bins)', ylabel='Range Index (Bins)',
                                 title=title, cmap='seismic', vmin=-50, vmax=0, colorbar_label='Relative Amplitude (dB)')
@@ -580,7 +1008,7 @@ class Radar:
 
             range_axis, velocity_axis, plot_extent = self._prepare_range_velocity_axes()
 
-            title = f'Task 2: Range-Doppler Plot (Scaled) - {name} \nData File: {self.radar_file_3D.name}'
+            title = f'Task 2: Range-Doppler Plot (Scaled) - {name} \nData File: {self._get_current_data_filename()}'
             self._generic_plot_2d(self.normalized_db, extent=plot_extent,
                                 xlabel='Velocity (m/s)', ylabel='Distance (m)',
                                 title=title, cmap='seismic', vmin=-50, vmax=0, colorbar_label='Relative Amplitude (dB)')
@@ -605,7 +1033,7 @@ class Radar:
         V, R = np.meshgrid(velocity_axis, range_axis)  # V: velocity, R: range
         Z = self.normalized_db
 
-        title = f'Task 2 (3D): Range-Doppler Surface - {name} \nData File: {self.radar_file_3D.name}'
+        title = f'Task 2 (3D): Range-Doppler Surface - {name} \nData File: {self._get_current_data_filename()}'
         self._generic_plot_3d(V, R, Z,
                               xlabel='Velocity (m/s)', ylabel='Distance (m)', zlabel='Relative Amplitude (dB)',
                               title=title, cmap='seismic', vmin=-150, vmax=0, elev=elev, azim=azim, decimate=decimate)
@@ -831,6 +1259,7 @@ class Radar:
         ax.legend(handles=legend_patches, loc='upper right', bbox_to_anchor=(1.35, 1.0))
 
         plt.tight_layout()
+
         plt.show()
 
     def compute_cfar_thresholds(self, data=None, kernel=None, threshold_factor=1.5, pad_fill=0,
@@ -1585,13 +2014,13 @@ class Radar:
             # Achsenskalierung
             range_axis, velocity_axis, plot_extent = self._prepare_range_velocity_axes()
 
-            title = f'Task {Task}: CFAR-masked Range-Doppler - {name} \nData File: {self.radar_file_3D.name}'
+            title = f'Task {Task}: CFAR-masked Range-Doppler - {name} \nData File: {self._get_current_data_filename()}'
             # gleiche Farben / Skala wie plot_fft_results
             self._generic_plot_2d(normalized_masked_db, extent=plot_extent,
                                 xlabel='Velocity (m/s)', ylabel='Distance (m)',
                                 title=title, cmap='seismic', vmin=-50, vmax=0, colorbar_label='Relative Amplitude (dB)')
         if mode == 2:
-            title = f'Task {Task}: CFAR-masked Range-Doppler - {name} \nData File: {self.radar_file_3D.name}'
+            title = f'Task {Task}: CFAR-masked Range-Doppler - {name} \nData File: {self._get_current_data_filename()}'
             # gleiche Farben / Skala wie plot_fft_results
             self._generic_plot_2d(normalized_masked_db, extent=None,
                                 xlabel='Doppler Index (Bins)', ylabel='Range Index (Bins)',
@@ -1604,19 +2033,19 @@ class Radar:
     
 
         
-    
-    def plot_range_profile_at_detection(self, detection_index=0):
+ 
+
+    def plot_range_profile_at_detection(self, detection_index=0, matlab_filename=None):
         """
         Zeigt das Entfernungsprofil (Range-Dimension) für eine bestimmte Detektion.
         Verwendet absolute Power in dB (nicht normalisiert), um positive Werte zu zeigen.
-
-        Erweiterung:
-        - Zweizeilige Darstellung:
-          * Oben: unveränderte Range-Plot (wie vorher)
-          * Unten: Doppler-Profile (Zeile entlang Doppler bei r_bin) mit CFAR-Schwelle
+        
+        Args:
+            detection_index (int): Welcher Treffer aus der CFAR-Liste gezeigt werden soll.
+            matlab_filename (str, optional): Wenn gesetzt (z.B. 'profile.mat'), werden die Daten exportiert.
         """
 
-        # Fallback auf cfar_detections (nur Task 3)
+        # Fallback auf cfar_detections
         if hasattr(self, 'cfar_detections'):
             det_indices = np.argwhere(self.cfar_detections == 1)
             
@@ -1631,28 +2060,21 @@ class Radar:
             r_bin, d_bin = det_indices[detection_index]
             azimuth_deg = None
             has_angle_info = False
-         
+            
         else:
             self._log("Fehler: Keine CFAR-Detektionen vorhanden. Führe zuerst Task_Step_3 aus.")
             return
-        
-
-        # Provisorisch für Vergleich CFAR
-        # r_bin = 147
-        # d_bin = 20
 
         # Extrahiere Range-Profil bei dieser Doppler-Position
         range_profile = self.fft_shifted[:, d_bin]
         
-        # NEU: Konvertiere zu absoluter Power in dB (NICHT normalisiert)
-        # Power = |signal|^2, dann 10*log10 für Power in dB
+        # Konvertiere zu absoluter Power in dB
         power_linear = np.abs(range_profile) ** 2
-        power_db = 10 * np.log10(power_linear + 1e-20)  # Vermeide log(0)
+        power_db = 10 * np.log10(power_linear + 1e-20)
         
-        # NEU: Extrahiere CFAR-Threshold für diesen Doppler-Bin (Range-Achse)
+        # Extrahiere CFAR-Threshold für diesen Doppler-Bin (Range-Achse)
         if hasattr(self, 'cfar_thresholds'):
             cfar_threshold_linear = self.cfar_thresholds[:, d_bin]
-            # Konvertiere zu dB (Power-Skala)
             cfar_threshold_db = 10 * np.log10(cfar_threshold_linear + 1e-20)
         else:
             cfar_threshold_db = None
@@ -1669,55 +2091,7 @@ class Radar:
         range_peak = range_axis[peak_bin]        # 1D-Peak
         velocity_m_s = velocity_axis[d_bin]
         
-        # ------------------------------
-        # Neues Layout: 2 Zeilen (Range oben, Doppler unten)
-        # ------------------------------
-        fig, (ax_range, ax_doppler) = plt.subplots(2, 1, figsize=(12, 10), sharex=False)
-        
-        # ------- Range-Plot (UNVERÄNDERT, nur auf ax_range) -------
-        ax_range.plot(range_axis, power_db, 'b-', linewidth=1.5, label='Signal')
-        
-        # Plotte CFAR-Threshold
-        if cfar_threshold_db is not None:
-            ax_range.plot(range_axis, cfar_threshold_db, color='red', linewidth=2, 
-                          label='Threshold', alpha=0.8)
-        
-        # Markiere ALLE Detektionen bei diesem Doppler-Bin mit roten Punkten
-        detections_at_doppler = det_indices[det_indices[:, 1] == d_bin]
-        if len(detections_at_doppler) > 0:
-            detection_ranges = range_axis[detections_at_doppler[:, 0]]
-            detection_powers = power_db[detections_at_doppler[:, 0]]
-            ax_range.plot(detection_ranges, detection_powers, 'o', color='yellow', 
-                          markersize=10, markeredgecolor='red', markeredgewidth=2,
-                          label=f'Detections ({len(detections_at_doppler)})', zorder=5)
-        
-        # Markiere die aktuell ausgewählte CFAR-Detektion mit vertikaler Linie
-        ax_range.axvline(x=range_detection, color='r', linestyle='--', linewidth=2, 
-                         label=f'Selected Detection at {range_detection:.2f} m', alpha=0.7)
-    
-        # Beschriftung
-        ax_range.set_xlabel('Range (m)', fontsize=12)
-        ax_range.set_ylabel('Receive Power (dB)', fontsize=12)  # Absolute Power
-        
-        title_str = f'Range Profile at Velocity = {velocity_m_s:.3f} m/s ({velocity_m_s*3.6:.2f} km/h)\n'
-        title_str += f'Detection #{detection_index+1} (Range Bin: {r_bin}, Doppler Bin: {d_bin}'
-        if has_angle_info:
-            title_str += f', Azimuth: {azimuth_deg:.1f}°'
-        title_str += f')\nData File: {self.radar_file_3D.name}'
-        
-        ax_range.set_title(title_str, fontsize=14)
-        ax_range.grid(True, alpha=0.3)
-        # ax_range.legend(fontsize=10)
-        
-        # Automatische Y-Achsen-Limits basierend auf Daten
-        y_min = np.percentile(power_db[np.isfinite(power_db)], 1)  # 1. Perzentil
-        y_max = np.max(power_db[np.isfinite(power_db)]) + 5
-        y_min = 50
-        y_max = 190
-        ax_range.set_ylim([y_min, y_max])
-        
-        
-        # ------- Doppler-Plot (neu, entlang Doppler für festen r_bin) -------
+        # ------- Doppler-Plot Datenvorbereitung -------
         doppler_profile = self.fft_shifted[r_bin, :]
         doppler_power_linear = np.abs(doppler_profile) ** 2
         doppler_power_db = 10 * np.log10(doppler_power_linear + 1e-20)
@@ -1728,16 +2102,54 @@ class Radar:
             cfar_threshold_doppler_db = 10 * np.log10(cfar_threshold_doppler_linear + 1e-20)
         else:
             cfar_threshold_doppler_db = None
+            
+        # Identifiziere Detektionen für die Marker
+        detections_at_doppler = det_indices[det_indices[:, 1] == d_bin] # Für Range Plot
+        detections_at_range = det_indices[det_indices[:, 0] == r_bin]   # Für Doppler Plot
+
+        # ------------------------------
+        # Plotting (Matplotlib)
+        # ------------------------------
+        fig, (ax_range, ax_doppler) = plt.subplots(2, 1, figsize=(12, 10), sharex=False)
         
-        # X-Achse: velocity_axis
-        ax_doppler.plot(velocity_axis, doppler_power_db, 'b-', linewidth=1.5, label='Signal (Doppler slice)')
+        # --- 1. Range Plot ---
+        ax_range.plot(range_axis, power_db, 'b-', linewidth=1.5, label='Signal')
+        
+        if cfar_threshold_db is not None:
+            ax_range.plot(range_axis, cfar_threshold_db, color='red', linewidth=2, 
+                        label='Threshold', alpha=0.8)
+        
+        # Marker für Detektionen
+        if len(detections_at_doppler) > 0:
+            detection_ranges = range_axis[detections_at_doppler[:, 0]]
+            detection_powers = power_db[detections_at_doppler[:, 0]]
+            ax_range.plot(detection_ranges, detection_powers, 'o', color='yellow', 
+                        markersize=10, markeredgecolor='red', markeredgewidth=2,
+                        label=f'Detections ({len(detections_at_doppler)})', zorder=5)
+        
+        # Vertikale Linie für aktuelle Selektion
+        ax_range.axvline(x=range_detection, color='r', linestyle='--', linewidth=2, 
+                        label=f'Selected: {range_detection:.2f} m', alpha=0.7)
+
+        ax_range.set_xlabel('Range (m)', fontsize=12)
+        ax_range.set_ylabel('Receive Power (dB)', fontsize=12)
+        
+        title_str = f'Range Profile at Velocity = {velocity_m_s:.3f} m/s\n'
+        title_str += f'Detection #{detection_index+1} (R-Bin: {r_bin}, D-Bin: {d_bin})'
+        ax_range.set_title(title_str, fontsize=14)
+        ax_range.grid(True, alpha=0.3)
+        
+        # Fixe Limits aus deinem Code
+        ax_range.set_ylim([50, 190])
+        
+        # --- 2. Doppler Plot ---
+        ax_doppler.plot(velocity_axis, doppler_power_db, 'b-', linewidth=1.5, label='Signal')
         
         if cfar_threshold_doppler_db is not None:
             ax_doppler.plot(velocity_axis, cfar_threshold_doppler_db, color='red', linewidth=2,
-                            label='Threshold (Doppler)', alpha=0.8)
+                            label='Threshold', alpha=0.8)
         
-        # Markiere Detektionen an diesem Range (alle Doppler-Bins mit Detektionen)
-        detections_at_range = det_indices[det_indices[:, 0] == r_bin]
+        # Marker für Detektionen
         if len(detections_at_range) > 0:
             det_d_bins = detections_at_range[:, 1]
             det_velocities = velocity_axis[det_d_bins]
@@ -1746,24 +2158,53 @@ class Radar:
                             markersize=10, markeredgecolor='red', markeredgewidth=2,
                             label=f'Detections ({len(detections_at_range)})', zorder=5)
         
-        # Markiere die aktuell ausgewählte Doppler-Bin mit einer vertikalen Linie
+        # Vertikale Linie
         ax_doppler.axvline(x=velocity_m_s, color='r', linestyle='--', linewidth=2,
-                           label=f'Selected Doppler {velocity_m_s:.3f} m/s', alpha=0.7)
+                        label=f'Selected: {velocity_m_s:.3f} m/s', alpha=0.7)
         
         ax_doppler.set_xlabel('Velocity (m/s)', fontsize=12)
         ax_doppler.set_ylabel('Receive Power (dB)', fontsize=12)
-        ax_doppler.set_title(f'Doppler Profile at Range = {range_detection:.2f} m (Bin {r_bin})', fontsize=12)
+        ax_doppler.set_title(f'Doppler Profile at Range = {range_detection:.2f} m', fontsize=12)
         ax_doppler.grid(True, alpha=0.3)
-        # ax_doppler.legend(fontsize=10)
-        
-        # Automatische Y-Limits für Doppler-Plot
-        y_min_d = np.percentile(doppler_power_db[np.isfinite(doppler_power_db)], 1)
-        y_max_d = np.max(doppler_power_db[np.isfinite(doppler_power_db)]) + 5
-        y_min_d = 50
-        y_max_d = 190
-        ax_doppler.set_ylim([y_min_d, y_max_d])
+        ax_doppler.set_ylim([50, 190])
         
         plt.tight_layout()
+
+        # ------------------------------
+        # MATLAB Export Logik
+        # ------------------------------
+        if matlab_filename:
+            if not matlab_filename.endswith('.mat'):
+                matlab_filename += '.mat'
+                
+            # Wir müssen Arrays sammeln. Falls Thresholds None sind, leere Listen senden.
+            export_thresh_range = cfar_threshold_db if cfar_threshold_db is not None else []
+            export_thresh_doppler = cfar_threshold_doppler_db if cfar_threshold_doppler_db is not None else []
+
+            mat_data = {
+                # --- Range Plot Daten ---
+                'range_axis': range_axis,
+                'range_profile_db': power_db,
+                'range_threshold_db': export_thresh_range,
+                'range_detection_marker_indices': detections_at_doppler[:, 0], # Indizes für Marker
+                
+                # --- Doppler Plot Daten ---
+                'velocity_axis': velocity_axis,
+                'doppler_profile_db': doppler_power_db,
+                'doppler_threshold_db': export_thresh_doppler,
+                'doppler_detection_marker_indices': detections_at_range[:, 1], # Indizes für Marker
+                
+                # --- Metadaten für Linien/Titel ---
+                'selected_range_m': range_detection,
+                'selected_velocity_ms': velocity_m_s,
+                'selected_r_bin': r_bin,
+                'selected_d_bin': d_bin,
+                'detection_index': detection_index
+            }
+            
+            sio.savemat(matlab_filename, mat_data)
+            print(f"Profile erfolgreich exportiert nach: {matlab_filename}")
+
         plt.show()
         
         # Log-Ausgabe (unchanged)
@@ -2041,7 +2482,7 @@ class Radar:
         ax.set_xlabel('X (m) - Lateral')
         ax.set_ylabel('Y (m) - Longitudinal')
         ax.set_zlabel('Z (m) - Vertical')
-        ax.set_title(f'Task 4: 3D Object Localization\nData File: {self.radar_file_3D.name}')
+        ax.set_title(f'Task 4: 3D Object Localization\nData File: {self._get_current_data_filename()}')
         
         # **OPTIMIERT: Achsengrenzen basierend auf FOV und range_max**
         R_max = self.range_max
@@ -2150,7 +2591,7 @@ class Radar:
         try:
             self._generic_plot_2d(self.normalized_db, extent=plot_extent,
                                   xlabel='Velocity (m/s)', ylabel='Distance (m)',
-                                  title=title or f'CFAR Detections - {self.radar_file_3D.name}',
+                                  title=title or f'CFAR Detections - {self._get_current_data_filename()}',
                                   cmap='seismic', vmin=-50, vmax=0, colorbar_label='Relative Amplitude (dB)')
         finally:
             plt.show = old_show
@@ -2189,7 +2630,7 @@ class Radar:
             if self.output_print:
                 self._log(f"\t- Detection Bin (r,d)=({r_bin},{d_bin}) -> Range={range_m:.2f} m, Velocity={vel_m_s:.3f} m/s, Power={power_db:.1f} dB")
 
-        ax.set_title((title or f'CFAR Detections - {self.radar_file_3D.name}') + f"  (Anzahl: {len(reported)})")
+        ax.set_title((title or f'CFAR Detections - {self._get_current_data_filename()}') + f"  (Anzahl: {len(reported)})")
         plt.tight_layout()
         plt.show()
 
