@@ -33,8 +33,8 @@ def MRR_CornField_Config():
     radar_file_3D = "./RadarCube/MRR_CornField/3D/RadarCube"
     radar_file_4D = ""
 
-    threshold_factor = 300  # 15 für bessere Sensitivität
-    factor_formular_max_velocity = 10
+    threshold_factor = 15  # 15 für bessere Sensitivität
+    factor_formular_max_velocity = 4
 
     #Empfohlene Werte zum Testen:
     #threshold_factor	Verhalten
@@ -49,7 +49,7 @@ def MRR_CornField_Config():
     f_sampling = 15e6      # Sampling Rate (Hz)
     num_samples = 256      # N samples per chirp (256)
     tc = 45e-6             # Chirp time / interval (s)
-    chirp_slope = 15e12   # Chirp slope (Hz/s)
+    chirp_slope = 15e12     # Chirp slope (Hz/s)
     num_chirps = 64        # N Chirps per CPI (128)
     Rx_gain = 48           # RX Gain (dB)
 
@@ -62,23 +62,23 @@ def MRR_CornField_Config():
 def main():
     
     # Create Radar object for USRR with 4D data
-    USSR_radar = Radar(*USRR_Dynamic_Config(), num=8, use_tk=True, output_print=True, Dim_4=False)
+    # USSR_radar = Radar(*USRR_Dynamic_Config(), num=8, use_tk=True, output_print=True, Dim_4=False)
     
-    # Tasks ausführen - die ersten 4 Tasks funktionieren identisch für 3D und 4D
-    USSR_radar.Task_Step_1()
-    USSR_radar.Task_Step_2()
-    USSR_radar.Task_Step_3()
-    USSR_radar.Task_Step_4()
-    USSR_radar.Task_Step_5()
+    # # Tasks ausführen - die ersten 4 Tasks funktionieren identisch für 3D und 4D
+    # USSR_radar.Task_Step_1()
+    # USSR_radar.Task_Step_2()
+    # USSR_radar.Task_Step_3()
+    # USSR_radar.Task_Step_4()
+    # USSR_radar.Task_Step_5()
 
-    # # Create Radar object for MRR with 3D data
-    # MRR_radar = Radar(*MRR_CornField_Config(), num=8, use_tk=True, output_print=True, Dim_4=False)
+    # Create Radar object for MRR with 3D data
+    MRR_radar = Radar(*MRR_CornField_Config(), num=8, use_tk=True, output_print=True, Dim_4=False)
     # # Tasks ausführen - funktioniert mit 3D-Daten
-    # MRR_radar.Task_Step_1()
-    # MRR_radar.Task_Step_2()
-    # MRR_radar.Task_Step_3()
-    # MRR_radar.Task_Step_4()
-    # # Task 5 wird automatisch übersprungen da keine 4D-Daten vorhanden
+    MRR_radar.Task_Step_1()
+    MRR_radar.Task_Step_2()
+    MRR_radar.Task_Step_3()
+    MRR_radar.Task_Step_4()
+    # Task 5 wird automatisch übersprungen da keine 4D-Daten vorhanden
 
 if __name__ == "__main__":
     main()

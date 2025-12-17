@@ -71,12 +71,13 @@ class Radar:
 
 
         # Windowing parameters
-        self.Range_window_type = 'boxcar' # 'hanning' # 'boxcar'
+        self.Range_window_type = 'hanning' # 'boxcar' 'hanning' # 'hamming' 'blackman' 'kaiser'
         self.Doppler_window_type = 'hanning' # 'hanning'
+        self.kaiser_beta = 4.6  # Beta-Wert für Kaiser-Fenster 8.6
         self.window_name = [self.Range_window_type, self.Doppler_window_type]   #['blackman', 'hanning']  , ['blackman', 'blackman']
 
         # CFAR-Kernel Parameter
-        self.CFAR_method = 'ca'    # Auswahl CFAR-MEthode: 
+        self.CFAR_method = 'ca'    # Auswahl CFAR-Methode: 
                                    # > OS-CFAR Methode: 'os' 
                                    # > CA-CFAR Methode: 'ca'
 
@@ -652,7 +653,8 @@ class Radar:
 
     # Helper function to normalize window names
     def _normalize_window_name(self, name):
-        """Map common aliases to scipy/get_window accepted names."""
+        """Map common aliases to scipy/get_window accepted names.
+        For kaiser window, returns a tuple with default beta parameter."""
         if not isinstance(name, str):
             return name
         n = name.lower()
@@ -660,6 +662,8 @@ class Radar:
             return "hann"
         if n == "rect":
             return "boxcar"
+        if n == "kaiser":
+            return ("kaiser", self.kaiser_beta)  # Kaiser window with default beta=8.6
         return n
 
 
@@ -2202,8 +2206,12 @@ class Radar:
                 'detection_index': detection_index
             }
             
-            sio.savemat(matlab_filename, mat_data)
-            print(f"Profile erfolgreich exportiert nach: {matlab_filename}")
+            # speicher die datei im ordner Matlab_plot 
+            matlab_folder = "Matlab_plot"
+            Path(matlab_folder).mkdir(parents=True, exist_ok=True)
+            matlab_path = Path(matlab_folder) / matlab_filename
+            sio.savemat(matlab_path, mat_data)
+            print(f"Profile erfolgreich exportiert nach: {matlab_path}")
 
         plt.show()
         
