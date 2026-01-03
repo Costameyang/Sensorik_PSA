@@ -71,9 +71,9 @@ class Radar:
 
 
         # Windowing parameters
-        self.Range_window_type = 'hanning' # 'boxcar' 'hanning' # 'hamming' 'blackman' 'kaiser'
-        self.Doppler_window_type = 'hanning' # 'hanning'
-        self.kaiser_beta = 4.6  # Beta-Wert für Kaiser-Fenster 8.6
+        self.Range_window_type = 'boxcar' # 'boxcar' 'hanning' 'hamming' 'blackman' 'kaiser'
+        self.Doppler_window_type = 'boxcar' # 'hanning'
+        self.kaiser_beta = 8.6  # Beta-Wert für Kaiser-Fenster 8.6
         self.window_name = [self.Range_window_type, self.Doppler_window_type]   #['blackman', 'hanning']  , ['blackman', 'blackman']
 
         # CFAR-Kernel Parameter
@@ -82,10 +82,10 @@ class Radar:
                                    # > CA-CFAR Methode: 'ca'
 
         self.kernel_matrix = None       # Angabe einer 2D-Matrix als Kernel möglich (0=außerhalb, 1=train, 2=guard, 3=CUT)
-        self.train_range = 10 # 15
-        self.train_doppler = 10 # 15
-        self.guard_range = 8 # 10
-        self.guard_doppler = 8 #  10
+        self.train_range = 8 # 15
+        self.train_doppler = 8 # 15
+        self.guard_range = 5 # 10
+        self.guard_doppler = 5 #  10
         self.threshold_factor = threshold_factor     # Parameter zur Schwellwertberechnung
         self.window_cifar_max_size = 5  # Fenstergröße für Non-Maximum Suppression bei CFAR (ungerade Zahl)
 

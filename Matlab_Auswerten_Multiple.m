@@ -4,12 +4,30 @@
 % ---------------------------------------------------------
 clear; clc;
 
+%folder = "MRR\"; %  "MRR/"   "USRR/"
+
 % 1. HIER DATEINAMEN EINTRAGEN
 % Beispiel: filenames = {'profile_data_1.mat', 'profile_data_2.mat'};
-filenames = {'Task3_RangeProfile_Detection0_RadarCube8.npy_fact_300_Rang_hanning_Dopp_hanning.mat', 'Task3_RangeProfile_Detection0_RadarCube8.npy_fact_300_Rang_boxcar_Dopp_hanning.mat'}; 
+filenames = {
+    'Task3_RangeProfile_Detection0_RadarCube8.npy_fact_100_Rang_kaiser_Dopp_kaiser_4_6.mat', 
+    'Task3_RangeProfile_Detection0_RadarCube8.npy_fact_100_Rang_kaiser_Dopp_kaiser_8_6.mat',
+    'Task3_RangeProfile_Detection0_RadarCube8.npy_fact_100_Rang_blackman_Dopp_blackman.mat',
+    'Task3_RangeProfile_Detection0_RadarCube8.npy_fact_100_Rang_hamming_Dopp_hamming.mat',
+    'Task3_RangeProfile_Detection0_RadarCube8.npy_fact_100_Rang_boxcar_Dopp_boxcar.mat',
+    'Task3_RangeProfile_Detection0_RadarCube8.npy_fact_100_Rang_hanning_Dopp_hanning.mat'
+    }; 
+
+filenames = {
+    'Task3_RangeProfile_Detection0_RadarCube8.npy_fact_300_Rang_kaiser_Dopp_kaiser_4_6.mat', 
+    'Task3_RangeProfile_Detection0_RadarCube8.npy_fact_300_Rang_kaiser_Dopp_kaiser_8_6.mat',
+    'Task3_RangeProfile_Detection0_RadarCube8.npy_fact_300_Rang_blackman_Dopp_blackman.mat',
+    'Task3_RangeProfile_Detection0_RadarCube8.npy_fact_300_Rang_hamming_Dopp_hamming.mat',
+    'Task3_RangeProfile_Detection0_RadarCube8.npy_fact_300_Rang_boxcar_Dopp_boxcar.mat',
+    'Task3_RangeProfile_Detection0_RadarCube8.npy_fact_300_Rang_hanning_Dopp_hanning.mat'
+    }; 
 
 % Definition der Farben für die Dateien (1=Rot, 2=Blau, 3=Grün)
-file_colors = {'r', 'b', 'g', 'k', 'm'}; % Erweitert für Sicherheit
+file_colors = {'red', 'blue', 'black', 'yellow', 'm', 'green'}; % Erweitert für Sicherheit
 
 % 2. Legende an- oder ausschalten (true = AN, false = AUS)
 show_legend = false;
